@@ -1,5 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 const pool = require("../db");
 
 const router = express.Router();
@@ -7,6 +8,10 @@ const router = express.Router();
 function generateReferralCode() {
     return "CHERY" + Math.random().toString(36).substring(2, 8).toUpperCase();
 }
+
+/* =========================
+   REGISTER
+========================= */
 
 router.post("/register", async (req, res) => {
     try {
@@ -114,5 +119,117 @@ router.post("/register", async (req, res) => {
         });
     }
 });
+
+
+/* =========================
+   LOGIN
+========================= */
+
+router.post("/login", async (req, res) => {
+    try {
+        const {
+            identifier,
+            password
+        } = req.body;
+
+        if (!identifier || !password) {
+            return res.status(400).json({
+                success: false,
+                message: "Email/phone and password are required."
+            });
+        }
+
+        const cleanIdentifier = identifier.trim();
+
+        const result = await pool.query(
+            `SELECT
+                id,
+                full_name,
+                phone,
+                email,
+                password_hash,
+                referral_code,
+                referred_by,
+                account_status,
+                registration_paid,
+                created_at
+             FROM users
+             WHERE email = $1 OR phone = $1
+             LIMIT 1`,
+            [
+                cleanIdentifier.toLowerCase()
+            ]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid email/phone or password."
+            });
+        }
+
+        const user = result.rows[0];
+
+        const passwordMatch = await bcrypt.compare(
+            password,
+            user.password_hash
+        );
+
+        if (!passwordMatch) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid email/phone or password."
+            });
+        }
+
+        if (user.account_status === "suspended") {
+            return res.status(403).json({
+                success: false,
+                message: "Your account has been suspended."
+            });
+        }
+
+        const jwtSecret = process.env.JWT_SECRET;
+
+        if (!jwtSecret) {
+            console.error("JWT_SECRET is not configured.");
+
+            return res.status(500).json({
+                success: false,
+                message: "Server configuration error."
+            });
+        }
+
+        const token = jwt.sign(
+            {
+                id: user.id,
+                email: user.email,
+                phone: user.phone
+            },
+            jwtSecret,
+            {
+                expiresIn: "7d"
+            }
+        );
+
+        delete user.password_hash;
+
+        return res.status(200).json({
+            success: true,
+            message: "Login successful.",
+            token,
+            user
+        });
+
+    } catch (error) {
+        console.error("Login error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Server error. Please try again."
+        });
+    }
+});
+
 
 module.exports = router;
