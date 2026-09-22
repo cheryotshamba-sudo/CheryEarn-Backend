@@ -29,7 +29,6 @@ async function initializeDatabase() {
             );
         `);
 
-        // Add missing columns safely to an existing users table
         await pool.query(`
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS password_hash TEXT;
@@ -60,5 +59,3 @@ async function initializeDatabase() {
 initializeDatabase();
 
 module.exports = pool;
-
-Replace your current "db.js" completely with this version, then redeploy on Render.
