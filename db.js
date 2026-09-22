@@ -25,18 +25,32 @@ async function initializeDatabase() {
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
+                id TEXT PRIMARY KEY,
+
                 full_name VARCHAR(100) NOT NULL,
+
                 username VARCHAR(50) UNIQUE,
+
                 phone VARCHAR(20) UNIQUE NOT NULL,
+
                 email VARCHAR(150) UNIQUE NOT NULL,
+
                 password_hash TEXT,
-                account_status VARCHAR(20) DEFAULT 'pending',
-                registration_paid BOOLEAN DEFAULT FALSE,
+
+                account_status VARCHAR(20)
+                DEFAULT 'pending',
+
+                registration_paid BOOLEAN
+                DEFAULT FALSE,
+
                 referral_code VARCHAR(30) UNIQUE,
-                referred_by INTEGER,
+
+                referred_by TEXT,
+
                 cheryearn_number INTEGER UNIQUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+                created_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP
             );
         `);
 
@@ -74,7 +88,7 @@ async function initializeDatabase() {
 
         await pool.query(`
             ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS referred_by INTEGER;
+            ADD COLUMN IF NOT EXISTS referred_by TEXT;
         `);
 
         await pool.query(`
@@ -90,13 +104,41 @@ async function initializeDatabase() {
 
 
         // ==========================================
-        // IMPORTANT:
-        // DO NOT CONVERT EXISTING users.id
+        // REMOVE OLD REFERRAL FOREIGN KEY
         // ==========================================
 
-        console.log(
-            "Existing users.id structure preserved."
-        );
+        await pool.query(`
+            ALTER TABLE users
+            DROP CONSTRAINT IF EXISTS users_referred_by_fkey;
+        `);
+
+
+        // ==========================================
+        // MAKE REFERRED_BY TEXT
+        // ==========================================
+
+        const referredByType =
+            await pool.query(`
+                SELECT data_type
+                FROM information_schema.columns
+                WHERE table_name = 'users'
+                AND column_name = 'referred_by'
+                LIMIT 1;
+            `);
+
+
+        if (
+            referredByType.rows.length > 0 &&
+            referredByType.rows[0].data_type !== "text"
+        ) {
+
+            await pool.query(`
+                ALTER TABLE users
+                ALTER COLUMN referred_by TYPE TEXT
+                USING referred_by::text;
+            `);
+
+        }
 
 
         // ==========================================
@@ -212,7 +254,7 @@ async function initializeDatabase() {
 
 
         // ==========================================
-        // SYNCHRONIZE CHERYEARN COUNTER
+        // SYNCHRONIZE COUNTER
         // ==========================================
 
         await pool.query(`
@@ -247,7 +289,7 @@ async function initializeDatabase() {
             CREATE TABLE IF NOT EXISTS registration_payments (
                 id SERIAL PRIMARY KEY,
 
-                user_id INTEGER NOT NULL,
+                user_id TEXT NOT NULL,
 
                 amount NUMERIC(12, 2)
                 NOT NULL DEFAULT 200.00,
@@ -302,7 +344,7 @@ async function initializeDatabase() {
 
 
         // ==========================================
-        // COMMISSIONS TABLE
+        // COMMISSIONS
         // ==========================================
 
         await pool.query(`
@@ -311,9 +353,9 @@ async function initializeDatabase() {
 
                 payment_id INTEGER NOT NULL,
 
-                recipient_user_id INTEGER NOT NULL,
+                recipient_user_id TEXT NOT NULL,
 
-                source_user_id INTEGER NOT NULL,
+                source_user_id TEXT NOT NULL,
 
                 level INTEGER NOT NULL,
 
@@ -370,7 +412,7 @@ async function initializeDatabase() {
 
 
         // ==========================================
-        // FINISHED
+        // SUCCESS
         // ==========================================
 
         console.log(
