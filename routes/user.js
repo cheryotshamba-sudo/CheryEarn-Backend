@@ -295,6 +295,28 @@ router.get(
 
 
             // ==========================================
+            // CHERYEARN DISPLAY NUMBER
+            // ==========================================
+
+            const cheryearnId =
+                formatCheryEarnNumber(
+                    user.cheryearn_number
+                );
+
+
+            // ==========================================
+            // ORIGINAL CHERYEARN REFERRAL LINK
+            // ==========================================
+
+            const referralLink =
+                cheryearnId && user.username
+                    ? `https://cheryearn1.onrender.com/register.html?member=${encodeURIComponent(
+                        cheryearnId + "-" + user.username
+                    )}`
+                    : "";
+
+
+            // ==========================================
             // DIRECT REFERRALS
             // ==========================================
 
@@ -568,10 +590,10 @@ router.get(
 
 
             // ==========================================
-            // TOTAL CREDITED EARNINGS
+            // DIRECT EARNINGS
             // ==========================================
 
-            const earningsResult =
+            const directEarningsResult =
                 await pool.query(
                     `
                     SELECT
@@ -581,16 +603,53 @@ router.get(
                         ) AS total
                     FROM commissions
                     WHERE recipient_user_id = $1
+                      AND level = 1
                       AND status = 'CREDITED'
                     `,
                     [userId]
                 );
 
 
-            const totalEarnings =
+            const directEarnings =
                 Number(
-                    earningsResult.rows[0].total
+                    directEarningsResult.rows[0].total || 0
                 );
+
+
+            // ==========================================
+            // INDIRECT EARNINGS
+            // ==========================================
+
+            const indirectEarningsResult =
+                await pool.query(
+                    `
+                    SELECT
+                        COALESCE(
+                            SUM(amount),
+                            0
+                        ) AS total
+                    FROM commissions
+                    WHERE recipient_user_id = $1
+                      AND level = 2
+                      AND status = 'CREDITED'
+                    `,
+                    [userId]
+                );
+
+
+            const indirectEarnings =
+                Number(
+                    indirectEarningsResult.rows[0].total || 0
+                );
+
+
+            // ==========================================
+            // TOTAL CREDITED EARNINGS
+            // ==========================================
+
+            const totalEarnings =
+                directEarnings +
+                indirectEarnings;
 
 
             // ==========================================
@@ -603,9 +662,6 @@ router.get(
 
             // ==========================================
             // RECENT ACTIVITY STREAM
-            //
-            // Shows payments made by direct
-            // and indirect referrals.
             // ==========================================
 
             const activityResult =
@@ -717,22 +773,16 @@ router.get(
 
 
             // ==========================================
-            // CHERYEARN DISPLAY NUMBER
-            // ==========================================
-
-            const cheryearnId =
-                formatCheryEarnNumber(
-                    user.cheryearn_number
-                );
-
-
-            // ==========================================
             // DASHBOARD RESPONSE
             // ==========================================
 
             res.json({
 
                 success: true,
+
+                // ======================================
+                // USER
+                // ======================================
 
                 user: {
 
@@ -769,28 +819,86 @@ router.get(
                     cheryearn_id:
                         cheryearnId,
 
+                    referralLink:
+                        referralLink,
+
                     created_at:
                         user.created_at,
 
                     balance:
                         balance,
 
+                    availableBalance:
+                        balance,
+
                     totalEarnings:
                         totalEarnings,
 
+                    directEarnings:
+                        directEarnings,
+
+                    indirectEarnings:
+                        indirectEarnings,
+
                     totalReferrals:
-                        totalReferrals,
+                        totalReferrals
 
-                    directReferrals:
-                        directReferrals,
+                },
 
-                    indirectReferrals:
-                        indirectReferrals,
 
-                    recentActivity:
-                        recentActivity
+                // ======================================
+                // BALANCE
+                // ======================================
 
-                }
+                balance:
+                    balance,
+
+                availableBalance:
+                    balance,
+
+
+                // ======================================
+                // EARNINGS
+                // ======================================
+
+                totalEarnings:
+                    totalEarnings,
+
+                directEarnings:
+                    directEarnings,
+
+                indirectEarnings:
+                    indirectEarnings,
+
+
+                // ======================================
+                // REFERRAL LINK
+                // ======================================
+
+                referralLink:
+                    referralLink,
+
+
+                // ======================================
+                // REFERRALS
+                // ======================================
+
+                totalReferrals:
+                    totalReferrals,
+
+                directReferrals:
+                    directReferrals,
+
+                indirectReferrals:
+                    indirectReferrals,
+
+
+                // ======================================
+                // ACTIVITY
+                // ======================================
+
+                recentActivity:
+                    recentActivity
 
             });
 
