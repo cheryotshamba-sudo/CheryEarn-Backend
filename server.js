@@ -13,6 +13,14 @@ const app = express();
 
 
 // ======================================================
+// CHERYEARN FRONTEND
+// ======================================================
+
+const FRONTEND_URL =
+    "https://cheryearn1.onrender.com";
+
+
+// ======================================================
 // TEMPORARY REGISTRATION PAYMENT SETTINGS
 // ======================================================
 //
@@ -22,7 +30,7 @@ const app = express();
 // 2nd upline = KSh 2.50
 // Company = KSh 2.50
 //
-// Later we will change this back to:
+// Later:
 // Registration = KSh 200
 // 1st upline = KSh 100
 // 2nd upline = KSh 50
@@ -64,19 +72,397 @@ app.use(express.json());
 // AUTHENTICATION & USER ROUTES
 // ======================================================
 
-// POST /api/auth/register
-
 app.use(
     "/api/auth",
     authRoutes
 );
 
-
-// GET /api/user/dashboard
-
 app.use(
     "/api/user",
     userRoutes
+);
+
+
+// ======================================================
+// REFERRAL LINK AUTHENTICATION
+// ======================================================
+
+function authenticateReferralRequest(req, res, next) {
+
+    try {
+
+        const authorization =
+            req.headers.authorization || "";
+
+
+        if (
+            !authorization.startsWith("Bearer ")
+        ) {
+
+            return res.status(401).json({
+
+                success: false,
+
+                message:
+                    "Authentication required."
+
+            });
+
+        }
+
+
+        const token =
+            authorization.substring(7);
+
+
+        const jwt =
+            require("jsonwebtoken");
+
+
+        const decoded =
+            jwt.verify(
+                token,
+                process.env.JWT_SECRET
+            );
+
+
+        req.referralUserId =
+            decoded.id ||
+            decoded.userId ||
+            decoded.user_id;
+
+
+        if (!req.referralUserId) {
+
+            return res.status(401).json({
+
+                success: false,
+
+                message:
+                    "Invalid authentication token."
+
+            });
+
+        }
+
+
+        next();
+
+
+    } catch (error) {
+
+        return res.status(401).json({
+
+            success: false,
+
+            message:
+                "Invalid or expired authentication token."
+
+        });
+
+    }
+
+}
+
+
+// ======================================================
+// MAKE SAFE NAME FOR REFERRAL URL
+// ======================================================
+
+function makeSafeName(name) {
+
+    return String(name || "member")
+        .trim()
+        .replace(/[^a-zA-Z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .replace(/-+/g, "-")
+        .toLowerCase();
+
+}
+
+
+// ======================================================
+// CREATE FRIENDLY REFERRAL LINK
+// ======================================================
+//
+// Example:
+//
+// https://cheryearn1.onrender.com/register.html?member=cheryearn001-john-kamau
+//
+// The random referral code is NOT exposed.
+// ======================================================
+
+app.get(
+    "/api/referral-link",
+    authenticateReferralRequest,
+    async (req, res) => {
+
+        try {
+
+            const userResult =
+                await pool.query(
+                    `
+                    SELECT
+                        id,
+                        full_name,
+                        cheryearn_number
+                    FROM users
+                    WHERE id = $1
+                    LIMIT 1
+                    `,
+                    [
+                        Number(
+                            req.referralUserId
+                        )
+                    ]
+                );
+
+
+            if (
+                userResult.rows.length === 0
+            ) {
+
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "User account not found."
+
+                });
+
+            }
+
+
+            const user =
+                userResult.rows[0];
+
+
+            if (
+                !user.cheryearn_number
+            ) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "CheryEarn number is not available for this account."
+
+                });
+
+            }
+
+
+            const number =
+                `CheryEarn${String(
+                    user.cheryearn_number
+                ).padStart(3, "0")}`;
+
+
+            const safeName =
+                makeSafeName(
+                    user.full_name
+                );
+
+
+            const member =
+                `${number}-${safeName}`;
+
+
+            const referralLink =
+                `${FRONTEND_URL}/register.html?member=${encodeURIComponent(
+                    member
+                )}`;
+
+
+            return res.json({
+
+                success: true,
+
+                referralLink:
+
+                    referralLink,
+
+                member:
+
+                    member
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "Referral link error:",
+                error.message
+            );
+
+
+            return res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Unable to create referral link."
+
+            });
+
+        }
+
+    }
+);
+
+
+// ======================================================
+// RESOLVE FRIENDLY REFERRAL LINK
+// ======================================================
+//
+// The visible link contains:
+//
+// CheryEarn001-John-Kamau
+//
+// This endpoint converts the CheryEarn number
+// back to the INTERNAL referral code.
+//
+// The random referral code never appears
+// in the user's referral URL.
+// ======================================================
+
+app.get(
+    "/api/referral/resolve/:member",
+    async (req, res) => {
+
+        try {
+
+            const member =
+                String(
+                    req.params.member || ""
+                );
+
+
+            const match =
+                member.match(
+                    /^CheryEarn(\d+)(?:-.+)?$/i
+                );
+
+
+            if (!match) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Invalid referral link."
+
+                });
+
+            }
+
+
+            const cheryearnNumber =
+                Number(
+                    match[1]
+                );
+
+
+            if (
+                !Number.isInteger(
+                    cheryearnNumber
+                ) ||
+                cheryearnNumber <= 0
+            ) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Invalid CheryEarn number."
+
+                });
+
+            }
+
+
+            const userResult =
+                await pool.query(
+                    `
+                    SELECT
+                        id,
+                        full_name,
+                        referral_code,
+                        cheryearn_number
+                    FROM users
+                    WHERE cheryearn_number = $1
+                    LIMIT 1
+                    `,
+                    [
+                        cheryearnNumber
+                    ]
+                );
+
+
+            if (
+                userResult.rows.length === 0
+            ) {
+
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "Referral member was not found."
+
+                });
+
+            }
+
+
+            const user =
+                userResult.rows[0];
+
+
+            return res.json({
+
+                success: true,
+
+                referrerUserId:
+                    user.id,
+
+                referralCode:
+                    user.referral_code,
+
+                cheryearnNumber:
+                    user.cheryearn_number,
+
+                fullName:
+                    user.full_name
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "Referral resolve error:",
+                error.message
+            );
+
+
+            return res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Unable to resolve referral link."
+
+            });
+
+        }
+
+    }
 );
 
 
@@ -190,12 +576,6 @@ function isCompletedStatus(status) {
 // ======================================================
 // PROCESS COMPLETED REGISTRATION PAYMENT
 // ======================================================
-//
-// This function is deliberately idempotent.
-//
-// If Paylor sends the same successful callback more
-// than once, the commissions will NOT be credited twice.
-// ======================================================
 
 async function processCompletedRegistrationPayment(
     paymentReference,
@@ -221,10 +601,6 @@ async function processCompletedRegistrationPayment(
             "BEGIN"
         );
 
-
-        // ==============================================
-        // LOCK PAYMENT RECORD
-        // ==============================================
 
         const paymentResult =
             await client.query(
@@ -262,10 +638,6 @@ async function processCompletedRegistrationPayment(
             paymentResult.rows[0];
 
 
-        // ==============================================
-        // ALREADY COMPLETED
-        // ==============================================
-
         if (
             String(payment.status)
                 .toUpperCase() ===
@@ -285,10 +657,6 @@ async function processCompletedRegistrationPayment(
 
         }
 
-
-        // ==============================================
-        // VERIFY AMOUNT
-        // ==============================================
 
         const gatewayAmount =
             Number(
@@ -313,10 +681,6 @@ async function processCompletedRegistrationPayment(
 
         }
 
-
-        // ==============================================
-        // GET USER + REFERRAL CHAIN
-        // ==============================================
 
         const userResult =
             await client.query(
@@ -391,10 +755,6 @@ async function processCompletedRegistrationPayment(
         }
 
 
-        // ==============================================
-        // MARK PAYMENT COMPLETED
-        // ==============================================
-
         await client.query(
             `
             UPDATE registration_payments
@@ -413,10 +773,6 @@ async function processCompletedRegistrationPayment(
         );
 
 
-        // ==============================================
-        // MARK USER REGISTRATION AS PAID
-        // ==============================================
-
         await client.query(
             `
             UPDATE users
@@ -430,10 +786,6 @@ async function processCompletedRegistrationPayment(
             ]
         );
 
-
-        // ==============================================
-        // LEVEL 1 COMMISSION
-        // ==============================================
 
         if (firstUplineId) {
 
@@ -477,10 +829,6 @@ async function processCompletedRegistrationPayment(
         }
 
 
-        // ==============================================
-        // LEVEL 2 COMMISSION
-        // ==============================================
-
         if (secondUplineId) {
 
             await client.query(
@@ -522,10 +870,6 @@ async function processCompletedRegistrationPayment(
 
         }
 
-
-        // ==============================================
-        // COMPLETE TRANSACTION
-        // ==============================================
 
         await client.query(
             "COMMIT"
@@ -637,10 +981,6 @@ app.post(
             );
 
 
-            // ==========================================
-            // VALIDATE USER ID
-            // ==========================================
-
             if (!userId) {
 
                 return res.status(400).json({
@@ -678,10 +1018,6 @@ app.post(
             }
 
 
-            // ==========================================
-            // VALIDATE PHONE
-            // ==========================================
-
             if (!phone) {
 
                 return res.status(400).json({
@@ -717,10 +1053,6 @@ app.post(
 
             }
 
-
-            // ==========================================
-            // GET USER
-            // ==========================================
 
             const userResult =
                 await pool.query(
@@ -759,10 +1091,6 @@ app.post(
                 userResult.rows[0];
 
 
-            // ==========================================
-            // CHECK ALREADY PAID
-            // ==========================================
-
             if (
                 user.registration_paid ===
                 true
@@ -779,10 +1107,6 @@ app.post(
 
             }
 
-
-            // ==========================================
-            // CHECK EXISTING PENDING PAYMENT
-            // ==========================================
 
             const pendingPaymentResult =
                 await pool.query(
@@ -819,10 +1143,6 @@ app.post(
             }
 
 
-            // ==========================================
-            // GENERATE PAYMENT REFERENCE
-            // ==========================================
-
             const reference =
                 "CHERY-" +
                 Date.now() +
@@ -831,10 +1151,6 @@ app.post(
                     Math.random() * 10000
                 );
 
-
-            // ==========================================
-            // CREATE PAYMENT RECORD FIRST
-            // ==========================================
 
             const paymentRecord =
                 await pool.query(
@@ -880,10 +1196,6 @@ app.post(
             const paymentId =
                 paymentRecord.rows[0].id;
 
-
-            // ==========================================
-            // CALLBACK URL
-            // ==========================================
 
             const callbackUrl =
                 `${process.env.BACKEND_URL}/paylor-callback`;
@@ -940,10 +1252,6 @@ app.post(
             );
 
 
-            // ==========================================
-            // SEND STK TO PAYLOR
-            // ==========================================
-
             const response =
                 await axios.post(
 
@@ -954,8 +1262,6 @@ app.post(
                         phone:
                             normalizedPhone,
 
-                        // IMPORTANT:
-                        // Server controls the amount.
                         amount:
                             REGISTRATION_FEE,
 
@@ -1006,10 +1312,6 @@ app.post(
             );
 
 
-            // ==========================================
-            // GET TRANSACTION ID
-            // ==========================================
-
             const transactionId =
                 response.data?.transactionId;
 
@@ -1017,10 +1319,6 @@ app.post(
             const status =
                 response.data?.status;
 
-
-            // ==========================================
-            // SAVE GATEWAY RESPONSE
-            // ==========================================
 
             await pool.query(
                 `
@@ -1037,10 +1335,6 @@ app.post(
                 ]
             );
 
-
-            // ==========================================
-            // PAYLOR DID NOT RETURN TRANSACTION ID
-            // ==========================================
 
             if (!transactionId) {
 
@@ -1075,10 +1369,6 @@ app.post(
 
             }
 
-
-            // ==========================================
-            // SUCCESS RESPONSE
-            // ==========================================
 
             return res.json({
 
@@ -1194,10 +1484,6 @@ app.post(
             );
 
 
-            // ==========================================
-            // CHECK SIGNATURE
-            // ==========================================
-
             if (!signature) {
 
                 console.log(
@@ -1307,10 +1593,6 @@ app.post(
             }
 
 
-            // ==========================================
-            // PARSE PAYMENT
-            // ==========================================
-
             const payment =
                 JSON.parse(
                     rawBody.toString("utf8")
@@ -1338,10 +1620,6 @@ app.post(
                 "================================="
             );
 
-
-            // ==========================================
-            // COMPLETED PAYMENT
-            // ==========================================
 
             if (
                 isCompletedStatus(
@@ -1410,10 +1688,6 @@ app.post(
             }
 
 
-            // ==========================================
-            // FAILED / CANCELLED
-            // ==========================================
-
             if (
                 String(payment.status)
                     .toUpperCase() ===
@@ -1428,12 +1702,6 @@ app.post(
 
                 console.log(
                     "PAYMENT NOT COMPLETED"
-                );
-
-
-                console.log(
-                    "Status:",
-                    payment.status
                 );
 
 
@@ -1465,10 +1733,6 @@ app.post(
 
             }
 
-
-            // ==========================================
-            // ACKNOWLEDGE WEBHOOK
-            // ==========================================
 
             return res.status(200).json({
 
@@ -1548,10 +1812,6 @@ app.post(
             );
 
 
-            // ==========================================
-            // REQUIRE TRANSACTION ID
-            // ==========================================
-
             if (!transactionId) {
 
                 return res.status(400).json({
@@ -1566,10 +1826,6 @@ app.post(
             }
 
 
-            // ==========================================
-            // QUERY PAYLOR
-            // ==========================================
-
             const response =
                 await axios.get(
 
@@ -1580,331 +1836,3 @@ app.post(
                         headers: {
 
                             Authorization:
-                                `Bearer ${process.env.PAYLOR_API_KEY}`,
-
-                            Accept:
-                                "application/json"
-
-                        }
-
-                    }
-
-                );
-
-
-            console.log("");
-            console.log(
-                "===== PAYLOR PAYMENT STATUS ====="
-            );
-
-
-            console.log(
-                response.data
-            );
-
-
-            // ==========================================
-            // NORMALIZE STATUS
-            // ==========================================
-
-            const paymentStatus =
-
-                response.data?.status ||
-
-                response.data?.data?.status ||
-
-                response.data?.transaction?.status ||
-
-                response.data?.payment?.status ||
-
-                response.data?.result?.status ||
-
-                "";
-
-
-            console.log(
-                "NORMALIZED PAYMENT STATUS:",
-                paymentStatus
-            );
-
-
-            // ==========================================
-            // COMPLETED
-            // ==========================================
-
-            if (
-                isCompletedStatus(
-                    paymentStatus
-                )
-            ) {
-
-                let paymentReference =
-                    reference;
-
-
-                // ======================================
-                // TRY TO GET REFERENCE FROM PAYLOR
-                // ======================================
-
-                if (
-                    !paymentReference
-                ) {
-
-                    paymentReference =
-                        response.data?.reference ||
-                        response.data?.data?.reference ||
-                        response.data?.transaction?.reference ||
-                        response.data?.payment?.reference ||
-                        response.data?.result?.reference ||
-                        null;
-
-                }
-
-
-                if (
-                    paymentReference
-                ) {
-
-                    try {
-
-                        const processingResult =
-                            await processCompletedRegistrationPayment(
-                                paymentReference,
-                                {
-                                    ...response.data,
-                                    status:
-                                        paymentStatus,
-                                    transactionId:
-                                        transactionId
-                                }
-                            );
-
-
-                        console.log(
-                            "Payment status processing result:",
-                            processingResult
-                        );
-
-
-                    } catch (processingError) {
-
-                        console.error(
-                            "Payment completion processing error:",
-                            processingError
-                        );
-
-
-                        return res.status(500).json({
-
-                            success: false,
-
-                            message:
-                                "Payment is completed but registration processing failed.",
-
-                            status:
-                                String(
-                                    paymentStatus
-                                ).toLowerCase()
-
-                        });
-
-                    }
-
-                } else {
-
-                    console.log(
-                        "Payment completed but reference was not available."
-                    );
-
-                }
-
-            }
-
-
-            // ==========================================
-            // FAILED / CANCELLED
-            // ==========================================
-
-            if (
-                String(paymentStatus)
-                    .toUpperCase() ===
-                    "FAILED" ||
-                String(paymentStatus)
-                    .toUpperCase() ===
-                    "CANCELLED" ||
-                String(paymentStatus)
-                    .toUpperCase() ===
-                    "CANCELED"
-            ) {
-
-                if (
-                    reference
-                ) {
-
-                    await pool.query(
-                        `
-                        UPDATE registration_payments
-                        SET
-                            status = $1,
-                            gateway_response = $2
-                        WHERE payment_reference = $3
-                          AND status = 'PENDING'
-                        `,
-                        [
-                            String(
-                                paymentStatus
-                            ).toUpperCase(),
-
-                            JSON.stringify(
-                                response.data
-                            ),
-
-                            reference
-                        ]
-                    );
-
-                }
-
-            }
-
-
-            // ==========================================
-            // RETURN STATUS
-            // ==========================================
-
-            return res.json({
-
-                success: true,
-
-                status:
-                    String(
-                        paymentStatus
-                    ).toLowerCase(),
-
-                paid:
-                    isCompletedStatus(
-                        paymentStatus
-                    ),
-
-                userId:
-                    userId ||
-                    null,
-
-                reference:
-                    reference ||
-                    null,
-
-                data:
-                    response.data
-
-            });
-
-
-        } catch (error) {
-
-            console.log(
-                "Payment status error:",
-                error.response?.data ||
-                error.message
-            );
-
-
-            return res.status(
-
-                error.response?.status ||
-                500
-
-            ).json({
-
-                success: false,
-
-                message:
-                    "Unable to check payment status",
-
-                data:
-                    error.response?.data ||
-                    null
-
-            });
-
-        }
-
-    }
-);
-
-
-// ======================================================
-// HEALTH CHECK
-// ======================================================
-
-app.get(
-    "/health",
-    (req, res) => {
-
-        res.json({
-
-            success: true,
-
-            service:
-                "CheryEarn Backend",
-
-            paymentGateway:
-                "Paylor",
-
-            registrationFee:
-                REGISTRATION_FEE,
-
-            firstUpline:
-                FIRST_UPLINE_AMOUNT,
-
-            secondUpline:
-                SECOND_UPLINE_AMOUNT,
-
-            company:
-                COMPANY_AMOUNT,
-
-            status:
-                "online"
-
-        });
-
-    }
-);
-
-
-// ======================================================
-// SERVER
-// ======================================================
-
-const PORT =
-    process.env.PORT || 3000;
-
-
-app.listen(
-    PORT,
-    () => {
-
-        console.log("");
-
-        console.log(
-            `CheryEarn Backend running on port ${PORT}`
-        );
-
-        console.log(
-            `Registration test fee: KSh ${REGISTRATION_FEE}`
-        );
-
-        console.log(
-            `1st upline: KSh ${FIRST_UPLINE_AMOUNT}`
-        );
-
-        console.log(
-            `2nd upline: KSh ${SECOND_UPLINE_AMOUNT}`
-        );
-
-        console.log(
-            `Company: KSh ${COMPANY_AMOUNT}`
-        );
-
-    }
-);
