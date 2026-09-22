@@ -7,6 +7,104 @@ const router = express.Router();
 
 
 // ===============================
+// REGISTER
+// ===============================
+
+router.post("/register", async (req, res) => {
+    try {
+        const {
+            full_name,
+            phone,
+            email,
+            password
+        } = req.body;
+
+        if (!full_name || !phone || !email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: "Full name, phone, email and password are required."
+            });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: "Password must be at least 6 characters."
+            });
+        }
+
+        const cleanName = full_name.trim();
+        const cleanPhone = phone.trim();
+        const cleanEmail = email.trim().toLowerCase();
+
+        const existingUser = await pool.query(
+            `
+            SELECT id
+            FROM users
+            WHERE phone = $1
+               OR LOWER(email) = LOWER($2)
+            LIMIT 1
+            `,
+            [cleanPhone, cleanEmail]
+        );
+
+        if (existingUser.rows.length > 0) {
+            return res.status(409).json({
+                success: false,
+                message: "Email or phone number is already registered."
+            });
+        }
+
+        const passwordHash = await bcrypt.hash(password, 12);
+
+        const result = await pool.query(
+            `
+            INSERT INTO users
+            (
+                full_name,
+                phone,
+                email,
+                password_hash,
+                account_status,
+                registration_paid
+            )
+            VALUES
+            ($1, $2, $3, $4, 'active', FALSE)
+            RETURNING
+                id,
+                full_name,
+                phone,
+                email,
+                account_status,
+                registration_paid,
+                created_at
+            `,
+            [
+                cleanName,
+                cleanPhone,
+                cleanEmail,
+                passwordHash
+            ]
+        );
+
+        res.status(201).json({
+            success: true,
+            message: "Account created successfully.",
+            user: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error("Registration error:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Registration failed. Please try again."
+        });
+    }
+});
+
+
+// ===============================
 // LOGIN
 // ===============================
 
@@ -55,7 +153,7 @@ router.post("/login", async (req, res) => {
         if (!user.password_hash) {
             return res.status(500).json({
                 success: false,
-                message: "Account password is not configured."
+                message: "Account password is not configured. Please create a new account."
             });
         }
 
