@@ -11,8 +11,7 @@ const router = express.Router();
 
 function authenticateToken(req, res, next) {
 
-    const authHeader =
-        req.headers.authorization;
+    const authHeader = req.headers.authorization;
 
     if (!authHeader) {
         return res.status(401).json({
@@ -21,8 +20,7 @@ function authenticateToken(req, res, next) {
         });
     }
 
-    const parts =
-        authHeader.split(" ");
+    const parts = authHeader.split(" ");
 
     if (
         parts.length !== 2 ||
@@ -38,11 +36,10 @@ function authenticateToken(req, res, next) {
 
     try {
 
-        const decoded =
-            jwt.verify(
-                token,
-                process.env.JWT_SECRET
-            );
+        const decoded = jwt.verify(
+            token,
+            process.env.JWT_SECRET
+        );
 
         req.user = decoded;
 
@@ -56,7 +53,6 @@ function authenticateToken(req, res, next) {
         });
 
     }
-
 }
 
 
@@ -75,15 +71,10 @@ function parseGatewayResponse(value) {
     }
 
     try {
-
         return JSON.parse(value);
-
     } catch (error) {
-
         return {};
-
     }
-
 }
 
 
@@ -97,9 +88,7 @@ function getTransactionCode(
 ) {
 
     const data =
-        parseGatewayResponse(
-            gatewayResponse
-        );
+        parseGatewayResponse(gatewayResponse);
 
     const possibleKeys = [
 
@@ -133,10 +122,7 @@ function getTransactionCode(
 
     ];
 
-    for (
-        const key
-        of possibleKeys
-    ) {
+    for (const key of possibleKeys) {
 
         if (
             data &&
@@ -145,12 +131,8 @@ function getTransactionCode(
             String(data[key]).trim() !== ""
         ) {
 
-            return String(
-                data[key]
-            );
-
+            return String(data[key]);
         }
-
     }
 
     const nestedObjects = [
@@ -163,20 +145,14 @@ function getTransactionCode(
 
     ];
 
-    for (
-        const nested
-        of nestedObjects
-    ) {
+    for (const nested of nestedObjects) {
 
         if (
             nested &&
             typeof nested === "object"
         ) {
 
-            for (
-                const key
-                of possibleKeys
-            ) {
+            for (const key of possibleKeys) {
 
                 if (
                     nested[key] !== undefined &&
@@ -184,20 +160,13 @@ function getTransactionCode(
                     String(nested[key]).trim() !== ""
                 ) {
 
-                    return String(
-                        nested[key]
-                    );
-
+                    return String(nested[key]);
                 }
-
             }
-
         }
-
     }
 
     return paymentReference || "N/A";
-
 }
 
 
@@ -205,23 +174,16 @@ function getTransactionCode(
 // CREATE CHERYEARN DISPLAY NUMBER
 // ===============================
 
-function formatCheryEarnNumber(
-    number
-) {
+function formatCheryEarnNumber(number) {
 
     if (
         number === null ||
         number === undefined
     ) {
-
         return null;
-
     }
 
-    return `CheryEarn${String(
-        number
-    ).padStart(3, "0")}`;
-
+    return `CheryEarn${String(number).padStart(3, "0")}`;
 }
 
 
@@ -238,24 +200,18 @@ function createReferralLink(
         cheryearnNumber === null ||
         cheryearnNumber === undefined
     ) {
-
         return "";
-
     }
 
     if (
         !username ||
         String(username).trim() === ""
     ) {
-
         return "";
-
     }
 
     const cheryearnId =
-        formatCheryEarnNumber(
-            cheryearnNumber
-        );
+        formatCheryEarnNumber(cheryearnNumber);
 
     const cleanUsername =
         String(username)
@@ -267,18 +223,16 @@ function createReferralLink(
         !cheryearnId ||
         !cleanUsername
     ) {
-
         return "";
-
     }
 
     const member =
         `${cheryearnId}-${cleanUsername}`;
 
-    return `https://cheryearn1.onrender.com/register.html?member=${encodeURIComponent(
-        member
-    )}`;
-
+    return (
+        "https://cheryearn1.onrender.com/register.html?member=" +
+        encodeURIComponent(member)
+    );
 }
 
 
@@ -293,101 +247,115 @@ router.get(
 
         try {
 
-            const userId =
-                req.user.id;
+            const userId = req.user.id;
 
 
             // ==========================================
             // GET CURRENT USER
             // ==========================================
 
-            const result =
-                await pool.query(
-                    `
-                    SELECT
-                        id,
-                        full_name,
-                        username,
-                        phone,
-                        email,
-                        account_status,
-                        registration_paid,
-                        referral_code,
-                        referred_by,
-                        cheryearn_number,
-                        created_at
-                    FROM users
-                    WHERE id = $1
-                    LIMIT 1
-                    `,
-                    [userId]
-                );
+            const result = await pool.query(
+                `
+                SELECT
+                    id,
+                    full_name,
+                    username,
+                    phone,
+                    email,
+                    account_status,
+                    registration_paid,
+                    referral_code,
+                    referred_by,
+                    cheryearn_number,
+                    created_at
+                FROM users
+                WHERE id = $1
+                LIMIT 1
+                `,
+                [userId]
+            );
 
 
-            if (
-                result.rows.length === 0
-            ) {
+            if (result.rows.length === 0) {
 
                 return res.status(404).json({
                     success: false,
-                    message:
-                        "User account not found."
+                    message: "User account not found."
                 });
 
             }
 
 
-            const user =
-                result.rows[0];
+            const user = result.rows[0];
+
+
+            // ==========================================
+            // CREATE CHERYEARN ID
+            // ==========================================
+
+            const cheryearnId =
+                formatCheryEarnNumber(
+                    user.cheryearn_number
+                );
+
+
+            // ==========================================
+            // CREATE REFERRAL LINK
+            // ==========================================
+
+            const referralLink =
+                createReferralLink(
+                    user.cheryearn_number,
+                    user.username
+                );
 
 
             // ==========================================
             // DIRECT REFERRALS
             // ==========================================
 
-            const directResult =
-                await pool.query(
-                    `
-                    SELECT
-                        u.id,
-                        u.full_name,
-                        u.phone,
-                        u.cheryearn_number,
-                        u.created_at,
+            const directResult = await pool.query(
+                `
+                SELECT
+                    u.id,
+                    u.full_name,
+                    u.phone,
+                    u.cheryearn_number,
+                    u.created_at,
 
-                        rp.id AS payment_id,
-                        rp.amount,
-                        rp.status AS payment_status,
-                        rp.payment_reference,
-                        rp.gateway_response,
-                        rp.created_at AS payment_created_at,
+                    rp.id AS payment_id,
+                    rp.amount,
+                    rp.status AS payment_status,
+                    rp.payment_reference,
+                    rp.gateway_response,
+                    rp.created_at AS payment_created_at,
+                    rp.completed_at,
+
+                    c.amount AS commission,
+                    c.level AS commission_level,
+                    c.status AS commission_status
+
+                FROM users u
+
+                LEFT JOIN registration_payments rp
+                    ON rp.user_id = u.id
+
+                LEFT JOIN commissions c
+                    ON c.payment_id = rp.id
+                    AND c.recipient_user_id = $1
+                    AND c.level = 1
+
+                WHERE u.referred_by = $1
+
+                ORDER BY
+                    COALESCE(
                         rp.completed_at,
-
-                        c.amount AS commission,
-                        c.level AS commission_level,
-                        c.status AS commission_status
-
-                    FROM users u
-
-                    LEFT JOIN registration_payments rp
-                        ON rp.user_id = u.id
-
-                    LEFT JOIN commissions c
-                        ON c.payment_id = rp.id
-                        AND c.recipient_user_id = $1
-                        AND c.level = 1
-
-                    WHERE u.referred_by = $1
-
-                    ORDER BY
-                        COALESCE(
-                            rp.completed_at,
-                            rp.created_at,
-                            u.created_at
-                        ) DESC
-                    `,
-                    [userId]
-                );
+                        rp.created_at,
+                        u.created_at
+                    ) DESC
+                `,
+                [userId]
+            );
 
 
             // ==========================================
@@ -409,9 +377,7 @@ router.get(
             };
 
 
-            if (
-                directIds.length > 0
-            ) {
+            if (directIds.length > 0) {
 
                 indirectResult =
                     await pool.query(
@@ -468,65 +434,63 @@ router.get(
             // ==========================================
 
             const directReferrals =
-                directResult.rows.map(
-                    row => {
+                directResult.rows.map(row => {
 
-                        const transactionCode =
-                            getTransactionCode(
-                                row.gateway_response,
-                                row.payment_reference
-                            );
+                    const transactionCode =
+                        getTransactionCode(
+                            row.gateway_response,
+                            row.payment_reference
+                        );
 
-                        return {
+                    return {
 
-                            userId:
-                                row.id,
+                        userId:
+                            row.id,
 
-                            fullName:
-                                row.full_name,
+                        fullName:
+                            row.full_name,
 
-                            cheryearnNumber:
-                                formatCheryEarnNumber(
-                                    row.cheryearn_number
-                                ),
+                        cheryearnNumber:
+                            formatCheryEarnNumber(
+                                row.cheryearn_number
+                            ),
 
-                            phone:
-                                row.phone,
+                        phone:
+                            row.phone,
 
-                            amountPaid:
-                                row.amount !== null
-                                    ? Number(row.amount)
-                                    : 0,
+                        amountPaid:
+                            row.amount !== null
+                                ? Number(row.amount)
+                                : 0,
 
-                            paymentStatus:
-                                row.payment_status ||
-                                "NOT PAID",
+                        paymentStatus:
+                            row.payment_status ||
+                            "NOT PAID",
 
-                            paymentTime:
-                                row.completed_at ||
-                                row.payment_created_at ||
-                                row.created_at ||
-                                null,
+                        paymentTime:
+                            row.completed_at ||
+                            row.payment_created_at ||
+                            row.created_at ||
+                            null,
 
-                            transactionCode:
-                                transactionCode,
+                        transactionCode:
+                            transactionCode,
 
-                            level:
-                                "Direct",
+                        level:
+                            "Direct",
 
-                            commission:
-                                row.commission !== null
-                                    ? Number(row.commission)
-                                    : 0,
+                        commission:
+                            row.commission !== null
+                                ? Number(row.commission)
+                                : 0,
 
-                            commissionStatus:
-                                row.commission_status ||
-                                null
+                        commissionStatus:
+                            row.commission_status ||
+                            null
 
-                        };
+                    };
 
-                    }
-                );
+                });
 
 
             // ==========================================
@@ -534,65 +498,63 @@ router.get(
             // ==========================================
 
             const indirectReferrals =
-                indirectResult.rows.map(
-                    row => {
+                indirectResult.rows.map(row => {
 
-                        const transactionCode =
-                            getTransactionCode(
-                                row.gateway_response,
-                                row.payment_reference
-                            );
+                    const transactionCode =
+                        getTransactionCode(
+                            row.gateway_response,
+                            row.payment_reference
+                        );
 
-                        return {
+                    return {
 
-                            userId:
-                                row.id,
+                        userId:
+                            row.id,
 
-                            fullName:
-                                row.full_name,
+                        fullName:
+                            row.full_name,
 
-                            cheryearnNumber:
-                                formatCheryEarnNumber(
-                                    row.cheryearn_number
-                                ),
+                        cheryearnNumber:
+                            formatCheryEarnNumber(
+                                row.cheryearn_number
+                            ),
 
-                            phone:
-                                row.phone,
+                        phone:
+                            row.phone,
 
-                            amountPaid:
-                                row.amount !== null
-                                    ? Number(row.amount)
-                                    : 0,
+                        amountPaid:
+                            row.amount !== null
+                                ? Number(row.amount)
+                                : 0,
 
-                            paymentStatus:
-                                row.payment_status ||
-                                "NOT PAID",
+                        paymentStatus:
+                            row.payment_status ||
+                            "NOT PAID",
 
-                            paymentTime:
-                                row.completed_at ||
-                                row.payment_created_at ||
-                                row.created_at ||
-                                null,
+                        paymentTime:
+                            row.completed_at ||
+                            row.payment_created_at ||
+                            row.created_at ||
+                            null,
 
-                            transactionCode:
-                                transactionCode,
+                        transactionCode:
+                            transactionCode,
 
-                            level:
-                                "Indirect",
+                        level:
+                            "Indirect",
 
-                            commission:
-                                row.commission !== null
-                                    ? Number(row.commission)
-                                    : 0,
+                        commission:
+                            row.commission !== null
+                                ? Number(row.commission)
+                                : 0,
 
-                            commissionStatus:
-                                row.commission_status ||
-                                null
+                        commissionStatus:
+                            row.commission_status ||
+                            null
 
-                        };
+                    };
 
-                    }
-                );
+                });
 
 
             // ==========================================
@@ -682,28 +644,7 @@ router.get(
 
 
             // ==========================================
-            // CHERYEARN DISPLAY NUMBER
-            // ==========================================
-
-            const cheryearnId =
-                formatCheryEarnNumber(
-                    user.cheryearn_number
-                );
-
-
-            // ==========================================
-            // REFERRAL LINK
-            // ==========================================
-
-            const referralLink =
-                createReferralLink(
-                    user.cheryearn_number,
-                    user.username
-                );
-
-
-            // ==========================================
-            // RECENT ACTIVITY STREAM
+            // RECENT ACTIVITY
             // ==========================================
 
             const activityResult =
@@ -752,77 +693,69 @@ router.get(
 
 
             const recentActivity =
-                activityResult.rows.map(
-                    row => {
+                activityResult.rows.map(row => {
 
-                        const isDirect =
-                            directIds.includes(
-                                row.user_id
-                            );
+                    const isDirect =
+                        directIds.includes(
+                            row.user_id
+                        );
 
-                        const transactionCode =
-                            getTransactionCode(
-                                row.gateway_response,
-                                row.payment_reference
-                            );
+                    const transactionCode =
+                        getTransactionCode(
+                            row.gateway_response,
+                            row.payment_reference
+                        );
 
-                        return {
+                    return {
 
-                            paymentId:
-                                row.id,
+                        paymentId:
+                            row.id,
 
-                            cheryearnNumber:
-                                formatCheryEarnNumber(
-                                    row.cheryearn_number
-                                ),
+                        cheryearnNumber:
+                            formatCheryEarnNumber(
+                                row.cheryearn_number
+                            ),
 
-                            fullName:
-                                row.full_name,
+                        fullName:
+                            row.full_name,
 
-                            phone:
-                                row.phone,
+                        phone:
+                            row.phone,
 
-                            amount:
-                                Number(
-                                    row.amount || 0
-                                ),
+                        amount:
+                            Number(row.amount || 0),
 
-                            status:
-                                row.status,
+                        status:
+                            row.status,
 
-                            transactionCode:
-                                transactionCode,
+                        transactionCode:
+                            transactionCode,
 
-                            paymentReference:
-                                row.payment_reference,
+                        paymentReference:
+                            row.payment_reference,
 
-                            paymentTime:
-                                row.completed_at ||
-                                row.created_at ||
-                                null,
+                        paymentTime:
+                            row.completed_at ||
+                            row.created_at ||
+                            null,
 
-                            level:
-                                isDirect
-                                    ? "Direct"
-                                    : "Indirect"
+                        level:
+                            isDirect
+                                ? "Direct"
+                                : "Indirect"
 
-                        };
+                    };
 
-                    }
-                );
+                });
 
 
             // ==========================================
-            // DASHBOARD RESPONSE
+            // FINAL DASHBOARD RESPONSE
             // ==========================================
 
-            res.json({
+            return res.json({
 
                 success: true,
-
-                // ======================================
-                // TOP LEVEL DATA
-                // ======================================
 
                 balance:
                     balance,
@@ -839,8 +772,26 @@ router.get(
                 indirectEarnings:
                     indirectEarnings,
 
+                /*
+                 * THIS IS THE IMPORTANT PART.
+                 * The link is returned directly at the
+                 * top level of the dashboard response.
+                 */
+
                 referralLink:
                     referralLink,
+
+                referralCode:
+                    user.referral_code,
+
+                cheryearnNumber:
+                    user.cheryearn_number,
+
+                cheryearnId:
+                    cheryearnId,
+
+                username:
+                    user.username,
 
                 totalReferrals:
                     totalReferrals,
@@ -856,7 +807,7 @@ router.get(
 
 
                 // ======================================
-                // USER DATA
+                // USER OBJECT
                 // ======================================
 
                 user: {
@@ -929,12 +880,17 @@ router.get(
                 error
             );
 
-            res.status(500).json({
+            return res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Unable to load dashboard."
+                    "Unable to load dashboard.",
+
+                error:
+                    process.env.NODE_ENV === "production"
+                        ? undefined
+                        : error.message
 
             });
 
