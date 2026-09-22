@@ -14,6 +14,7 @@ pool.on("error", (err) => {
     console.error("Unexpected PostgreSQL error:", err);
 });
 
+
 async function initializeDatabase() {
 
     try {
@@ -49,6 +50,87 @@ async function initializeDatabase() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
+
+
+        // ==========================================
+        // FIX OLD USERS.ID TYPE
+        // ==========================================
+
+        const idTypeResult = await pool.query(`
+            SELECT data_type
+            FROM information_schema.columns
+            WHERE table_name = 'users'
+              AND column_name = 'id'
+            LIMIT 1;
+        `);
+
+        if (
+            idTypeResult.rows.length > 0 &&
+            idTypeResult.rows[0].data_type !== "integer"
+        ) {
+
+            console.log(
+                "users.id is not INTEGER. Checking existing IDs..."
+            );
+
+            const invalidIdsResult = await pool.query(`
+                SELECT id
+                FROM users
+                WHERE id IS NOT NULL
+                  AND id::text !~ '^[0-9]+$'
+                LIMIT 1;
+            `);
+
+            if (invalidIdsResult.rows.length > 0) {
+
+                throw new Error(
+                    "Existing users.id contains non-numeric values. Database ID migration cannot be performed automatically."
+                );
+
+            }
+
+            // Remove foreign keys that depend on users.id
+            await pool.query(`
+                DO $$
+                DECLARE
+                    constraint_record RECORD;
+                BEGIN
+
+                    FOR constraint_record IN
+                        SELECT
+                            tc.constraint_name,
+                            tc.table_name
+                        FROM information_schema.table_constraints tc
+                        JOIN information_schema.constraint_column_usage ccu
+                            ON tc.constraint_name = ccu.constraint_name
+                        WHERE tc.constraint_type = 'FOREIGN KEY'
+                          AND ccu.table_name = 'users'
+                          AND ccu.column_name = 'id'
+                    LOOP
+
+                        EXECUTE format(
+                            'ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I',
+                            constraint_record.table_name,
+                            constraint_record.constraint_name
+                        );
+
+                    END LOOP;
+
+                END
+                $$;
+            `);
+
+            // Change users.id from TEXT to INTEGER
+            await pool.query(`
+                ALTER TABLE users
+                ALTER COLUMN id TYPE INTEGER
+                USING id::integer;
+            `);
+
+            console.log(
+                "users.id successfully converted to INTEGER."
+            );
+        }
 
 
         // ==========================================
@@ -94,6 +176,48 @@ async function initializeDatabase() {
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS cheryearn_number INTEGER;
         `);
+
+
+        // ==========================================
+        // MAKE REFERRED_BY INTEGER
+        // ==========================================
+
+        const referredByTypeResult = await pool.query(`
+            SELECT data_type
+            FROM information_schema.columns
+            WHERE table_name = 'users'
+              AND column_name = 'referred_by'
+            LIMIT 1;
+        `);
+
+        if (
+            referredByTypeResult.rows.length > 0 &&
+            referredByTypeResult.rows[0].data_type !== "integer"
+        ) {
+
+            const invalidReferralResult = await pool.query(`
+                SELECT referred_by
+                FROM users
+                WHERE referred_by IS NOT NULL
+                  AND referred_by::text !~ '^[0-9]+$'
+                LIMIT 1;
+            `);
+
+            if (invalidReferralResult.rows.length > 0) {
+
+                throw new Error(
+                    "Existing users.referred_by contains non-numeric values and cannot be converted automatically."
+                );
+
+            }
+
+            await pool.query(`
+                ALTER TABLE users
+                ALTER COLUMN referred_by TYPE INTEGER
+                USING NULLIF(referred_by::text, '')::integer;
+            `);
+
+        }
 
 
         // ==========================================
@@ -160,23 +284,25 @@ async function initializeDatabase() {
         // OLD PASSWORD COLUMN
         // ==========================================
 
-        DO $$
-        BEGIN
+        await pool.query(`
+            DO $$
+            BEGIN
 
-            IF EXISTS (
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name = 'users'
-                AND column_name = 'password'
-            ) THEN
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'users'
+                    AND column_name = 'password'
+                ) THEN
 
-                ALTER TABLE users
-                ALTER COLUMN password DROP NOT NULL;
+                    ALTER TABLE users
+                    ALTER COLUMN password DROP NOT NULL;
 
-            END IF;
+                END IF;
 
-        END
-        $$;
+            END
+            $$;
+        `);
 
 
         // ==========================================
@@ -226,7 +352,6 @@ async function initializeDatabase() {
 
         // ==========================================
         // BACKFILL CHERYEARN NUMBERS
-        // FOR EXISTING USERS
         // ==========================================
 
         const existingUsersResult = await pool.query(`
@@ -274,7 +399,9 @@ async function initializeDatabase() {
                 `);
 
                 let nextNumber =
-                    Number(maxNumberResult.rows[0].max_number) + 1;
+                    Number(
+                        maxNumberResult.rows[0].max_number
+                    ) + 1;
 
                 const usersToNumberResult = await pool.query(`
                     SELECT id
@@ -283,7 +410,10 @@ async function initializeDatabase() {
                     ORDER BY created_at ASC, id ASC;
                 `);
 
-                for (const user of usersToNumberResult.rows) {
+                for (
+                    const user
+                    of usersToNumberResult.rows
+                ) {
 
                     await pool.query(`
                         UPDATE users
@@ -444,7 +574,9 @@ async function initializeDatabase() {
         `);
 
 
-        console.log("Database initialized successfully.");
+        console.log(
+            "Database initialized successfully."
+        );
 
     } catch (error) {
 
