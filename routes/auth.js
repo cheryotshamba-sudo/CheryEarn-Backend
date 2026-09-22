@@ -7,6 +7,39 @@ const router = express.Router();
 
 
 // ===============================
+// GENERATE UNIQUE REFERRAL CODE
+// ===============================
+
+async function generateReferralCode() {
+    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+    while (true) {
+        let code = "CHERY";
+
+        for (let i = 0; i < 6; i++) {
+            code += characters.charAt(
+                Math.floor(Math.random() * characters.length)
+            );
+        }
+
+        const result = await pool.query(
+            `
+            SELECT id
+            FROM users
+            WHERE referral_code = $1
+            LIMIT 1
+            `,
+            [code]
+        );
+
+        if (result.rows.length === 0) {
+            return code;
+        }
+    }
+}
+
+
+// ===============================
 // REGISTER
 // ===============================
 
@@ -57,6 +90,9 @@ router.post("/register", async (req, res) => {
 
         const passwordHash = await bcrypt.hash(password, 12);
 
+        // Generate unique referral code
+        const referralCode = await generateReferralCode();
+
         const result = await pool.query(
             `
             INSERT INTO users
@@ -66,10 +102,11 @@ router.post("/register", async (req, res) => {
                 email,
                 password_hash,
                 account_status,
-                registration_paid
+                registration_paid,
+                referral_code
             )
             VALUES
-            ($1, $2, $3, $4, 'active', FALSE)
+            ($1, $2, $3, $4, 'active', FALSE, $5)
             RETURNING
                 id,
                 full_name,
@@ -77,13 +114,15 @@ router.post("/register", async (req, res) => {
                 email,
                 account_status,
                 registration_paid,
+                referral_code,
                 created_at
             `,
             [
                 cleanName,
                 cleanPhone,
                 cleanEmail,
-                passwordHash
+                passwordHash,
+                referralCode
             ]
         );
 
@@ -132,6 +171,7 @@ router.post("/login", async (req, res) => {
                 password_hash,
                 account_status,
                 registration_paid,
+                referral_code,
                 created_at
             FROM users
             WHERE LOWER(email) = LOWER($1)
@@ -211,6 +251,7 @@ router.post("/login", async (req, res) => {
                 email: user.email,
                 account_status: user.account_status,
                 registration_paid: user.registration_paid,
+                referral_code: user.referral_code,
                 created_at: user.created_at
             }
         });
