@@ -27,6 +27,7 @@ async function initializeDatabase() {
                 password_hash TEXT,
                 account_status VARCHAR(20) DEFAULT 'pending',
                 registration_paid BOOLEAN DEFAULT FALSE,
+                referral_code VARCHAR(30) UNIQUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
@@ -50,6 +51,19 @@ async function initializeDatabase() {
         await pool.query(`
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        `);
+
+        // Add referral code column if it does not exist
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS referral_code VARCHAR(30);
+        `);
+
+        // Create unique index for referral codes
+        await pool.query(`
+            CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_unique
+            ON users(referral_code)
+            WHERE referral_code IS NOT NULL;
         `);
 
         // The old database has a "password" column.
