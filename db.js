@@ -39,7 +39,7 @@ try {
 
 
     // ==========================================
-    // ADD MISSING COLUMNS TO OLD DATABASES
+    // ADD MISSING USER COLUMNS
     // ==========================================
 
     await pool.query(`
@@ -67,7 +67,6 @@ try {
         ADD COLUMN IF NOT EXISTS referral_code VARCHAR(30);
     `);
 
-    // New referral relationship
     await pool.query(`
         ALTER TABLE users
         ADD COLUMN IF NOT EXISTS referred_by INTEGER;
@@ -156,6 +155,123 @@ try {
     await pool.query(`
         CREATE INDEX IF NOT EXISTS users_referred_by_index
         ON users(referred_by);
+    `);
+
+
+    // ==========================================
+    // REGISTRATION PAYMENTS TABLE
+    // ==========================================
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS registration_payments (
+            id SERIAL PRIMARY KEY,
+
+            user_id INTEGER NOT NULL,
+
+            amount NUMERIC(12, 2) NOT NULL DEFAULT 200.00,
+
+            status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+
+            payment_reference VARCHAR(100) UNIQUE NOT NULL,
+
+            phone VARCHAR(20),
+
+            first_upline_amount NUMERIC(12, 2) NOT NULL DEFAULT 100.00,
+
+            second_upline_amount NUMERIC(12, 2) NOT NULL DEFAULT 50.00,
+
+            company_amount NUMERIC(12, 2) NOT NULL DEFAULT 50.00,
+
+            gateway_response TEXT,
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            completed_at TIMESTAMP,
+
+            CONSTRAINT registration_payments_user_fkey
+                FOREIGN KEY (user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE
+        );
+    `);
+
+
+    // ==========================================
+    // PAYMENT LOOKUP INDEXES
+    // ==========================================
+
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS registration_payments_user_index
+        ON registration_payments(user_id);
+    `);
+
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS registration_payments_status_index
+        ON registration_payments(status);
+    `);
+
+
+    // ==========================================
+    // COMMISSIONS TABLE
+    // ==========================================
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS commissions (
+            id SERIAL PRIMARY KEY,
+
+            payment_id INTEGER NOT NULL,
+
+            recipient_user_id INTEGER NOT NULL,
+
+            source_user_id INTEGER NOT NULL,
+
+            level INTEGER NOT NULL,
+
+            amount NUMERIC(12, 2) NOT NULL,
+
+            status VARCHAR(20) NOT NULL DEFAULT 'CREDITED',
+
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            CONSTRAINT commissions_payment_fkey
+                FOREIGN KEY (payment_id)
+                REFERENCES registration_payments(id)
+                ON DELETE CASCADE,
+
+            CONSTRAINT commissions_recipient_fkey
+                FOREIGN KEY (recipient_user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+
+            CONSTRAINT commissions_source_fkey
+                FOREIGN KEY (source_user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE,
+
+            CONSTRAINT commissions_level_check
+                CHECK (level IN (1, 2)),
+
+            CONSTRAINT commissions_amount_check
+                CHECK (amount > 0),
+
+            CONSTRAINT commissions_unique_payment_level
+                UNIQUE (payment_id, level)
+        );
+    `);
+
+
+    // ==========================================
+    // COMMISSION LOOKUP INDEXES
+    // ==========================================
+
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS commissions_recipient_index
+        ON commissions(recipient_user_id);
+    `);
+
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS commissions_source_index
+        ON commissions(source_user_id);
     `);
 
 
