@@ -31,7 +31,7 @@ async function initializeDatabase() {
             );
         `);
 
-        // Add missing columns safely
+        // Add new authentication columns if missing
         await pool.query(`
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS password_hash TEXT;
@@ -52,7 +52,14 @@ async function initializeDatabase() {
             ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
         `);
 
-        // Make sure the users ID automatically generates numbers
+        // The old database has a "password" column.
+        // Make it optional because we now use password_hash.
+        await pool.query(`
+            ALTER TABLE users
+            ALTER COLUMN password DROP NOT NULL;
+        `);
+
+        // Make sure user IDs automatically generate
         await pool.query(`
             CREATE SEQUENCE IF NOT EXISTS users_id_seq;
         `);
@@ -67,7 +74,7 @@ async function initializeDatabase() {
             ALTER COLUMN id SET DEFAULT nextval('users_id_seq');
         `);
 
-        // Make the sequence start after the highest existing user ID
+        // Keep the sequence synchronized with existing IDs
         await pool.query(`
             SELECT setval(
                 'users_id_seq',
