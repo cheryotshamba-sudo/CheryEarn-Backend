@@ -4,289 +4,458 @@ const dotenv = require("dotenv");
 dotenv.config();
 
 const pool = new Pool({
-connectionString: process.env.DATABASE_URL,
-ssl: process.env.NODE_ENV === "production"
-? { rejectUnauthorized: false }
-: false
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === "production"
+        ? { rejectUnauthorized: false }
+        : false
 });
 
 pool.on("error", (err) => {
-console.error("Unexpected PostgreSQL error:", err);
+    console.error("Unexpected PostgreSQL error:", err);
 });
 
 async function initializeDatabase() {
 
-try {
+    try {
 
-    // ==========================================
-    // USERS TABLE
-    // ==========================================
+        // ==========================================
+        // USERS TABLE
+        // ==========================================
 
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            full_name VARCHAR(100) NOT NULL,
-            phone VARCHAR(20) UNIQUE NOT NULL,
-            email VARCHAR(150) UNIQUE NOT NULL,
-            password_hash TEXT,
-            account_status VARCHAR(20) DEFAULT 'pending',
-            registration_paid BOOLEAN DEFAULT FALSE,
-            referral_code VARCHAR(30) UNIQUE,
-            referred_by INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
 
+                full_name VARCHAR(100) NOT NULL,
 
-    // ==========================================
-    // ADD MISSING USER COLUMNS
-    // ==========================================
+                username VARCHAR(50) UNIQUE,
 
-    await pool.query(`
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS password_hash TEXT;
-    `);
+                phone VARCHAR(20) UNIQUE NOT NULL,
 
-    await pool.query(`
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) DEFAULT 'pending';
-    `);
+                email VARCHAR(150) UNIQUE NOT NULL,
 
-    await pool.query(`
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS registration_paid BOOLEAN DEFAULT FALSE;
-    `);
+                password_hash TEXT,
 
-    await pool.query(`
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-    `);
+                account_status VARCHAR(20) DEFAULT 'pending',
 
-    await pool.query(`
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS referral_code VARCHAR(30);
-    `);
+                registration_paid BOOLEAN DEFAULT FALSE,
 
-    await pool.query(`
-        ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS referred_by INTEGER;
-    `);
+                referral_code VARCHAR(30) UNIQUE,
+
+                referred_by INTEGER,
+
+                cheryearn_number INTEGER UNIQUE,
+
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
 
 
-    // ==========================================
-    // REFERRAL CODE UNIQUE INDEX
-    // ==========================================
+        // ==========================================
+        // ADD MISSING USER COLUMNS
+        // ==========================================
 
-    await pool.query(`
-        CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_unique
-        ON users(referral_code)
-        WHERE referral_code IS NOT NULL;
-    `);
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS password_hash TEXT;
+        `);
+
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) DEFAULT 'pending';
+        `);
+
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS registration_paid BOOLEAN DEFAULT FALSE;
+        `);
+
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        `);
+
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS referral_code VARCHAR(30);
+        `);
+
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS referred_by INTEGER;
+        `);
+
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS username VARCHAR(50);
+        `);
+
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS cheryearn_number INTEGER;
+        `);
 
 
-    // ==========================================
-    // REFERRAL RELATIONSHIP
-    // ==========================================
+        // ==========================================
+        // USERNAME UNIQUE INDEX
+        // ==========================================
 
-    await pool.query(`
+        await pool.query(`
+            CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique
+            ON users(username)
+            WHERE username IS NOT NULL;
+        `);
+
+
+        // ==========================================
+        // CHERYEARN NUMBER UNIQUE INDEX
+        // ==========================================
+
+        await pool.query(`
+            CREATE UNIQUE INDEX IF NOT EXISTS users_cheryearn_number_unique
+            ON users(cheryearn_number)
+            WHERE cheryearn_number IS NOT NULL;
+        `);
+
+
+        // ==========================================
+        // REFERRAL CODE UNIQUE INDEX
+        // ==========================================
+
+        await pool.query(`
+            CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_unique
+            ON users(referral_code)
+            WHERE referral_code IS NOT NULL;
+        `);
+
+
+        // ==========================================
+        // REFERRAL RELATIONSHIP
+        // ==========================================
+
+        await pool.query(`
+            DO $$
+            BEGIN
+
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'users_referred_by_fkey'
+                ) THEN
+
+                    ALTER TABLE users
+                    ADD CONSTRAINT users_referred_by_fkey
+                    FOREIGN KEY (referred_by)
+                    REFERENCES users(id)
+                    ON DELETE SET NULL;
+
+                END IF;
+
+            END
+            $$;
+        `);
+
+
+        // ==========================================
+        // OLD PASSWORD COLUMN
+        // ==========================================
+
         DO $$
         BEGIN
 
-            IF NOT EXISTS (
+            IF EXISTS (
                 SELECT 1
-                FROM pg_constraint
-                WHERE conname = 'users_referred_by_fkey'
+                FROM information_schema.columns
+                WHERE table_name = 'users'
+                AND column_name = 'password'
             ) THEN
 
                 ALTER TABLE users
-                ADD CONSTRAINT users_referred_by_fkey
-                FOREIGN KEY (referred_by)
-                REFERENCES users(id)
-                ON DELETE SET NULL;
+                ALTER COLUMN password DROP NOT NULL;
 
             END IF;
 
         END
         $$;
-    `);
 
 
-    // ==========================================
-    // OLD PASSWORD COLUMN
-    // ==========================================
+        // ==========================================
+        // USER ID SEQUENCE
+        // ==========================================
 
-    await pool.query(`
-        ALTER TABLE users
-        ALTER COLUMN password DROP NOT NULL;
-    `);
+        await pool.query(`
+            CREATE SEQUENCE IF NOT EXISTS users_id_seq;
+        `);
+
+        await pool.query(`
+            ALTER SEQUENCE users_id_seq
+            OWNED BY users.id;
+        `);
+
+        await pool.query(`
+            ALTER TABLE users
+            ALTER COLUMN id SET DEFAULT nextval('users_id_seq');
+        `);
+
+        await pool.query(`
+            SELECT setval(
+                'users_id_seq',
+                COALESCE((SELECT MAX(id) FROM users), 0) + 1,
+                false
+            );
+        `);
 
 
-    // ==========================================
-    // USER ID SEQUENCE
-    // ==========================================
+        // ==========================================
+        // CHERYEARN NUMBER COUNTER
+        // ==========================================
 
-    await pool.query(`
-        CREATE SEQUENCE IF NOT EXISTS users_id_seq;
-    `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS cheryearn_counter (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                last_number INTEGER NOT NULL DEFAULT 0
+            );
+        `);
 
-    await pool.query(`
-        ALTER SEQUENCE users_id_seq
-        OWNED BY users.id;
-    `);
+        await pool.query(`
+            INSERT INTO cheryearn_counter (id, last_number)
+            VALUES (1, 0)
+            ON CONFLICT (id) DO NOTHING;
+        `);
 
-    await pool.query(`
-        ALTER TABLE users
-        ALTER COLUMN id SET DEFAULT nextval('users_id_seq');
-    `);
 
-    await pool.query(`
-        SELECT setval(
-            'users_id_seq',
-            COALESCE((SELECT MAX(id) FROM users), 0) + 1,
-            false
+        // ==========================================
+        // BACKFILL CHERYEARN NUMBERS
+        // FOR EXISTING USERS
+        // ==========================================
+
+        const existingUsersResult = await pool.query(`
+            SELECT COUNT(*) AS count
+            FROM users
+            WHERE cheryearn_number IS NULL;
+        `);
+
+        const existingUsersWithoutNumber =
+            Number(existingUsersResult.rows[0].count);
+
+        if (existingUsersWithoutNumber > 0) {
+
+            const usersWithNumbersResult = await pool.query(`
+                SELECT COUNT(*) AS count
+                FROM users
+                WHERE cheryearn_number IS NOT NULL;
+            `);
+
+            const usersWithNumbers =
+                Number(usersWithNumbersResult.rows[0].count);
+
+            if (usersWithNumbers === 0) {
+
+                await pool.query(`
+                    WITH numbered_users AS (
+                        SELECT
+                            id,
+                            ROW_NUMBER() OVER (
+                                ORDER BY created_at ASC, id ASC
+                            ) AS new_number
+                        FROM users
+                    )
+                    UPDATE users u
+                    SET cheryearn_number = n.new_number
+                    FROM numbered_users n
+                    WHERE u.id = n.id;
+                `);
+
+            } else {
+
+                const maxNumberResult = await pool.query(`
+                    SELECT COALESCE(MAX(cheryearn_number), 0) AS max_number
+                    FROM users;
+                `);
+
+                let nextNumber =
+                    Number(maxNumberResult.rows[0].max_number) + 1;
+
+                const usersToNumberResult = await pool.query(`
+                    SELECT id
+                    FROM users
+                    WHERE cheryearn_number IS NULL
+                    ORDER BY created_at ASC, id ASC;
+                `);
+
+                for (const user of usersToNumberResult.rows) {
+
+                    await pool.query(`
+                        UPDATE users
+                        SET cheryearn_number = $1
+                        WHERE id = $2;
+                    `, [
+                        nextNumber,
+                        user.id
+                    ]);
+
+                    nextNumber++;
+                }
+            }
+        }
+
+
+        // ==========================================
+        // SYNCHRONIZE CHERYEARN COUNTER
+        // ==========================================
+
+        await pool.query(`
+            UPDATE cheryearn_counter
+            SET last_number = COALESCE(
+                (
+                    SELECT MAX(cheryearn_number)
+                    FROM users
+                ),
+                0
+            )
+            WHERE id = 1;
+        `);
+
+
+        // ==========================================
+        // REFERRAL LOOKUP INDEX
+        // ==========================================
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS users_referred_by_index
+            ON users(referred_by);
+        `);
+
+
+        // ==========================================
+        // REGISTRATION PAYMENTS TABLE
+        // ==========================================
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS registration_payments (
+                id SERIAL PRIMARY KEY,
+
+                user_id INTEGER NOT NULL,
+
+                amount NUMERIC(12, 2) NOT NULL DEFAULT 200.00,
+
+                status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+
+                payment_reference VARCHAR(100) UNIQUE NOT NULL,
+
+                phone VARCHAR(20),
+
+                first_upline_amount NUMERIC(12, 2) NOT NULL DEFAULT 100.00,
+
+                second_upline_amount NUMERIC(12, 2) NOT NULL DEFAULT 50.00,
+
+                company_amount NUMERIC(12, 2) NOT NULL DEFAULT 50.00,
+
+                gateway_response TEXT,
+
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                completed_at TIMESTAMP,
+
+                CONSTRAINT registration_payments_user_fkey
+                    FOREIGN KEY (user_id)
+                    REFERENCES users(id)
+                    ON DELETE CASCADE
+            );
+        `);
+
+
+        // ==========================================
+        // PAYMENT LOOKUP INDEXES
+        // ==========================================
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS registration_payments_user_index
+            ON registration_payments(user_id);
+        `);
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS registration_payments_status_index
+            ON registration_payments(status);
+        `);
+
+
+        // ==========================================
+        // COMMISSIONS TABLE
+        // ==========================================
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS commissions (
+                id SERIAL PRIMARY KEY,
+
+                payment_id INTEGER NOT NULL,
+
+                recipient_user_id INTEGER NOT NULL,
+
+                source_user_id INTEGER NOT NULL,
+
+                level INTEGER NOT NULL,
+
+                amount NUMERIC(12, 2) NOT NULL,
+
+                status VARCHAR(20) NOT NULL DEFAULT 'CREDITED',
+
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                CONSTRAINT commissions_payment_fkey
+                    FOREIGN KEY (payment_id)
+                    REFERENCES registration_payments(id)
+                    ON DELETE CASCADE,
+
+                CONSTRAINT commissions_recipient_fkey
+                    FOREIGN KEY (recipient_user_id)
+                    REFERENCES users(id)
+                    ON DELETE CASCADE,
+
+                CONSTRAINT commissions_source_fkey
+                    FOREIGN KEY (source_user_id)
+                    REFERENCES users(id)
+                    ON DELETE CASCADE,
+
+                CONSTRAINT commissions_level_check
+                    CHECK (level IN (1, 2)),
+
+                CONSTRAINT commissions_amount_check
+                    CHECK (amount > 0),
+
+                CONSTRAINT commissions_unique_payment_level
+                    UNIQUE (payment_id, level)
+            );
+        `);
+
+
+        // ==========================================
+        // COMMISSION LOOKUP INDEXES
+        // ==========================================
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS commissions_recipient_index
+            ON commissions(recipient_user_id);
+        `);
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS commissions_source_index
+            ON commissions(source_user_id);
+        `);
+
+
+        console.log("Database initialized successfully.");
+
+    } catch (error) {
+
+        console.error(
+            "Database initialization error:",
+            error
         );
-    `);
 
-
-    // ==========================================
-    // REFERRAL LOOKUP INDEX
-    // ==========================================
-
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS users_referred_by_index
-        ON users(referred_by);
-    `);
-
-
-    // ==========================================
-    // REGISTRATION PAYMENTS TABLE
-    // ==========================================
-
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS registration_payments (
-            id SERIAL PRIMARY KEY,
-
-            user_id INTEGER NOT NULL,
-
-            amount NUMERIC(12, 2) NOT NULL DEFAULT 200.00,
-
-            status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-
-            payment_reference VARCHAR(100) UNIQUE NOT NULL,
-
-            phone VARCHAR(20),
-
-            first_upline_amount NUMERIC(12, 2) NOT NULL DEFAULT 100.00,
-
-            second_upline_amount NUMERIC(12, 2) NOT NULL DEFAULT 50.00,
-
-            company_amount NUMERIC(12, 2) NOT NULL DEFAULT 50.00,
-
-            gateway_response TEXT,
-
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-            completed_at TIMESTAMP,
-
-            CONSTRAINT registration_payments_user_fkey
-                FOREIGN KEY (user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE
-        );
-    `);
-
-
-    // ==========================================
-    // PAYMENT LOOKUP INDEXES
-    // ==========================================
-
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS registration_payments_user_index
-        ON registration_payments(user_id);
-    `);
-
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS registration_payments_status_index
-        ON registration_payments(status);
-    `);
-
-
-    // ==========================================
-    // COMMISSIONS TABLE
-    // ==========================================
-
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS commissions (
-            id SERIAL PRIMARY KEY,
-
-            payment_id INTEGER NOT NULL,
-
-            recipient_user_id INTEGER NOT NULL,
-
-            source_user_id INTEGER NOT NULL,
-
-            level INTEGER NOT NULL,
-
-            amount NUMERIC(12, 2) NOT NULL,
-
-            status VARCHAR(20) NOT NULL DEFAULT 'CREDITED',
-
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-            CONSTRAINT commissions_payment_fkey
-                FOREIGN KEY (payment_id)
-                REFERENCES registration_payments(id)
-                ON DELETE CASCADE,
-
-            CONSTRAINT commissions_recipient_fkey
-                FOREIGN KEY (recipient_user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE,
-
-            CONSTRAINT commissions_source_fkey
-                FOREIGN KEY (source_user_id)
-                REFERENCES users(id)
-                ON DELETE CASCADE,
-
-            CONSTRAINT commissions_level_check
-                CHECK (level IN (1, 2)),
-
-            CONSTRAINT commissions_amount_check
-                CHECK (amount > 0),
-
-            CONSTRAINT commissions_unique_payment_level
-                UNIQUE (payment_id, level)
-        );
-    `);
-
-
-    // ==========================================
-    // COMMISSION LOOKUP INDEXES
-    // ==========================================
-
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS commissions_recipient_index
-        ON commissions(recipient_user_id);
-    `);
-
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS commissions_source_index
-        ON commissions(source_user_id);
-    `);
-
-
-    console.log("Database initialized successfully.");
-
-} catch (error) {
-
-    console.error(
-        "Database initialization error:",
-        error
-    );
-
+    }
 }
 
-}
 
 initializeDatabase();
 
