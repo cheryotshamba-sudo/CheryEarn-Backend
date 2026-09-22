@@ -16,7 +16,6 @@ pool.on("error", (err) => {
 
 async function initializeDatabase() {
     try {
-        // Create users table if it does not already exist
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -24,18 +23,31 @@ async function initializeDatabase() {
                 phone VARCHAR(20) UNIQUE NOT NULL,
                 email VARCHAR(150) UNIQUE NOT NULL,
                 password_hash TEXT,
-                referral_code VARCHAR(20) UNIQUE NOT NULL,
-                referred_by VARCHAR(20),
                 account_status VARCHAR(20) DEFAULT 'pending',
                 registration_paid BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
 
-        // Safely add password_hash if the existing table does not have it
+        // Add missing columns safely to an existing users table
         await pool.query(`
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS password_hash TEXT;
+        `);
+
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) DEFAULT 'pending';
+        `);
+
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS registration_paid BOOLEAN DEFAULT FALSE;
+        `);
+
+        await pool.query(`
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
         `);
 
         console.log("Database initialized successfully.");
@@ -48,3 +60,5 @@ async function initializeDatabase() {
 initializeDatabase();
 
 module.exports = pool;
+
+Replace your current "db.js" completely with this version, then redeploy on Render.
