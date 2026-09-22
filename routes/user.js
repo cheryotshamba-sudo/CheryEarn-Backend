@@ -101,7 +101,6 @@ function getTransactionCode(
             gatewayResponse
         );
 
-
     const possibleKeys = [
 
         "transactionId",
@@ -134,7 +133,6 @@ function getTransactionCode(
 
     ];
 
-
     for (
         const key
         of possibleKeys
@@ -155,7 +153,6 @@ function getTransactionCode(
 
     }
 
-
     const nestedObjects = [
 
         data.data,
@@ -165,7 +162,6 @@ function getTransactionCode(
         data.response
 
     ];
-
 
     for (
         const nested
@@ -200,7 +196,6 @@ function getTransactionCode(
 
     }
 
-
     return paymentReference || "N/A";
 
 }
@@ -223,10 +218,66 @@ function formatCheryEarnNumber(
 
     }
 
-
     return `CheryEarn${String(
         number
     ).padStart(3, "0")}`;
+
+}
+
+
+// ===============================
+// CREATE REFERRAL LINK
+// ===============================
+
+function createReferralLink(
+    cheryearnNumber,
+    username
+) {
+
+    if (
+        cheryearnNumber === null ||
+        cheryearnNumber === undefined
+    ) {
+
+        return "";
+
+    }
+
+    if (
+        !username ||
+        String(username).trim() === ""
+    ) {
+
+        return "";
+
+    }
+
+    const cheryearnId =
+        formatCheryEarnNumber(
+            cheryearnNumber
+        );
+
+    const cleanUsername =
+        String(username)
+            .trim()
+            .replace(/\s+/g, "")
+            .replace(/[^a-zA-Z0-9_.-]/g, "");
+
+    if (
+        !cheryearnId ||
+        !cleanUsername
+    ) {
+
+        return "";
+
+    }
+
+    const member =
+        `${cheryearnId}-${cleanUsername}`;
+
+    return `https://cheryearn1.onrender.com/register.html?member=${encodeURIComponent(
+        member
+    )}`;
 
 }
 
@@ -426,7 +477,6 @@ router.get(
                                 row.payment_reference
                             );
 
-
                         return {
 
                             userId:
@@ -493,7 +543,6 @@ router.get(
                                 row.payment_reference
                             );
 
-
                         return {
 
                             userId:
@@ -553,10 +602,8 @@ router.get(
             const totalDirectReferrals =
                 directReferrals.length;
 
-
             const totalIndirectReferrals =
                 indirectReferrals.length;
-
 
             const totalReferrals =
                 totalDirectReferrals +
@@ -647,24 +694,12 @@ router.get(
             // ==========================================
             // REFERRAL LINK
             // ==========================================
-            //
-            // IMPORTANT:
-            // Keep the original CheryEarn referral
-            // link format.
-            //
-            // Example:
-            //
-            // https://cheryearn1.onrender.com/register.html?member=CheryEarn002-cheryot
-            //
-            // ==========================================
 
             const referralLink =
-                cheryearnId &&
-                user.username
-                    ? `${"https://cheryearn1.onrender.com"}/register.html?member=${encodeURIComponent(
-                        cheryearnId + "-" + user.username
-                    )}`
-                    : "";
+                createReferralLink(
+                    user.cheryearn_number,
+                    user.username
+                );
 
 
             // ==========================================
@@ -725,13 +760,11 @@ router.get(
                                 row.user_id
                             );
 
-
                         const transactionCode =
                             getTransactionCode(
                                 row.gateway_response,
                                 row.payment_reference
                             );
-
 
                         return {
 
@@ -895,7 +928,6 @@ router.get(
                 "Dashboard error:",
                 error
             );
-
 
             res.status(500).json({
 
