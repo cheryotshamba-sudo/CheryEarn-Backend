@@ -5,72 +5,115 @@ const pool = require("../db");
 
 const router = express.Router();
 
-
 // ===============================
 // GENERATE UNIQUE REFERRAL CODE
 // ===============================
 
 async function generateReferralCode() {
-    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-    while (true) {
-        let code = "CHERY";
+const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-        for (let i = 0; i < 6; i++) {
-            code += characters.charAt(
-                Math.floor(Math.random() * characters.length)
-            );
-        }
+while (true) {
 
-        const result = await pool.query(
-            `
-            SELECT id
-            FROM users
-            WHERE referral_code = $1
-            LIMIT 1
-            `,
-            [code]
+    let code = "CHERY";
+
+    for (let i = 0; i < 6; i++) {
+
+        code += characters.charAt(
+            Math.floor(
+                Math.random() * characters.length
+            )
         );
 
-        if (result.rows.length === 0) {
-            return code;
-        }
+    }
+
+    const result = await pool.query(
+        `
+        SELECT id
+        FROM users
+        WHERE referral_code = $1
+        LIMIT 1
+        `,
+        [code]
+    );
+
+    if (result.rows.length === 0) {
+        return code;
     }
 }
 
+}
 
 // ===============================
 // REGISTER
 // ===============================
 
 router.post("/register", async (req, res) => {
-    try {
-        const {
-            full_name,
-            phone,
-            email,
-            password
-        } = req.body;
 
-        if (!full_name || !phone || !email || !password) {
-            return res.status(400).json({
-                success: false,
-                message: "Full name, phone, email and password are required."
-            });
-        }
+try {
 
-        if (password.length < 6) {
-            return res.status(400).json({
-                success: false,
-                message: "Password must be at least 6 characters."
-            });
-        }
+    const {
+        full_name,
+        phone,
+        email,
+        password,
+        referral_code
+    } = req.body;
 
-        const cleanName = full_name.trim();
-        const cleanPhone = phone.trim();
-        const cleanEmail = email.trim().toLowerCase();
 
-        const existingUser = await pool.query(
+    // ===============================
+    // VALIDATION
+    // ===============================
+
+    if (
+        !full_name ||
+        !phone ||
+        !email ||
+        !password
+    ) {
+
+        return res.status(400).json({
+            success: false,
+            message:
+                "Full name, phone, email and password are required."
+        });
+
+    }
+
+
+    if (password.length < 6) {
+
+        return res.status(400).json({
+            success: false,
+            message:
+                "Password must be at least 6 characters."
+        });
+
+    }
+
+
+    const cleanName =
+        full_name.trim();
+
+    const cleanPhone =
+        phone.trim();
+
+    const cleanEmail =
+        email.trim().toLowerCase();
+
+
+    const cleanReferralCode =
+        referral_code
+            ? referral_code.trim().toUpperCase()
+            : null;
+
+
+    // ===============================
+    // CHECK EXISTING USER
+    // ===============================
+
+    const existingUser =
+        await pool.query(
             `
             SELECT id
             FROM users
@@ -78,22 +121,87 @@ router.post("/register", async (req, res) => {
                OR LOWER(email) = LOWER($2)
             LIMIT 1
             `,
-            [cleanPhone, cleanEmail]
+            [
+                cleanPhone,
+                cleanEmail
+            ]
         );
 
-        if (existingUser.rows.length > 0) {
-            return res.status(409).json({
+
+    if (existingUser.rows.length > 0) {
+
+        return res.status(409).json({
+            success: false,
+            message:
+                "Email or phone number is already registered."
+        });
+
+    }
+
+
+    // ===============================
+    // FIND REFERRER
+    // ===============================
+
+    let referredBy = null;
+
+
+    if (cleanReferralCode) {
+
+        const referrer =
+            await pool.query(
+                `
+                SELECT id
+                FROM users
+                WHERE referral_code = $1
+                LIMIT 1
+                `,
+                [cleanReferralCode]
+            );
+
+
+        if (referrer.rows.length === 0) {
+
+            return res.status(400).json({
                 success: false,
-                message: "Email or phone number is already registered."
+                message:
+                    "Invalid referral code."
             });
+
         }
 
-        const passwordHash = await bcrypt.hash(password, 12);
 
-        // Generate unique referral code
-        const referralCode = await generateReferralCode();
+        referredBy =
+            referrer.rows[0].id;
 
-        const result = await pool.query(
+    }
+
+
+    // ===============================
+    // HASH PASSWORD
+    // ===============================
+
+    const passwordHash =
+        await bcrypt.hash(
+            password,
+            12
+        );
+
+
+    // ===============================
+    // GENERATE USER REFERRAL CODE
+    // ===============================
+
+    const referralCode =
+        await generateReferralCode();
+
+
+    // ===============================
+    // CREATE USER
+    // ===============================
+
+    const result =
+        await pool.query(
             `
             INSERT INTO users
             (
@@ -103,10 +211,20 @@ router.post("/register", async (req, res) => {
                 password_hash,
                 account_status,
                 registration_paid,
-                referral_code
+                referral_code,
+                referred_by
             )
             VALUES
-            ($1, $2, $3, $4, 'active', FALSE, $5)
+            (
+                $1,
+                $2,
+                $3,
+                $4,
+                'active',
+                FALSE,
+                $5,
+                $6
+            )
             RETURNING
                 id,
                 full_name,
@@ -115,6 +233,7 @@ router.post("/register", async (req, res) => {
                 account_status,
                 registration_paid,
                 referral_code,
+                referred_by,
                 created_at
             `,
             [
@@ -122,46 +241,80 @@ router.post("/register", async (req, res) => {
                 cleanPhone,
                 cleanEmail,
                 passwordHash,
-                referralCode
+                referralCode,
+                referredBy
             ]
         );
 
-        res.status(201).json({
-            success: true,
-            message: "Account created successfully.",
-            user: result.rows[0]
-        });
 
-    } catch (error) {
-        console.error("Registration error:", error);
+    // ===============================
+    // SUCCESS
+    // ===============================
 
-        res.status(500).json({
-            success: false,
-            message: "Registration failed. Please try again."
-        });
-    }
+    res.status(201).json({
+
+        success: true,
+
+        message:
+            referredBy
+                ? "Account created successfully through referral."
+                : "Account created successfully.",
+
+        user:
+            result.rows[0]
+
+    });
+
+
+} catch (error) {
+
+    console.error(
+        "Registration error:",
+        error
+    );
+
+
+    res.status(500).json({
+        success: false,
+        message:
+            "Registration failed. Please try again."
+    });
+
+}
+
 });
-
 
 // ===============================
 // LOGIN
 // ===============================
 
 router.post("/login", async (req, res) => {
-    try {
 
-        const { identifier, password } = req.body;
+try {
 
-        if (!identifier || !password) {
-            return res.status(400).json({
-                success: false,
-                message: "Email/phone and password are required."
-            });
-        }
+    const {
+        identifier,
+        password
+    } = req.body;
 
-        const value = identifier.trim();
 
-        const result = await pool.query(
+    if (!identifier || !password) {
+
+        return res.status(400).json({
+            success: false,
+            message:
+                "Email/phone and password are required."
+        });
+
+    }
+
+
+    const value =
+        identifier.trim();
+
+
+    const result =
+        await pool.query(
             `
             SELECT
                 id,
@@ -172,6 +325,7 @@ router.post("/login", async (req, res) => {
                 account_status,
                 registration_paid,
                 referral_code,
+                referred_by,
                 created_at
             FROM users
             WHERE LOWER(email) = LOWER($1)
@@ -181,54 +335,83 @@ router.post("/login", async (req, res) => {
             [value]
         );
 
-        if (result.rows.length === 0) {
-            return res.status(401).json({
-                success: false,
-                message: "Invalid email/phone or password."
-            });
-        }
 
-        const user = result.rows[0];
+    if (result.rows.length === 0) {
 
-        if (!user.password_hash) {
-            return res.status(500).json({
-                success: false,
-                message: "Account password is not configured. Please create a new account."
-            });
-        }
+        return res.status(401).json({
+            success: false,
+            message:
+                "Invalid email/phone or password."
+        });
 
-        const passwordMatch = await bcrypt.compare(
+    }
+
+
+    const user =
+        result.rows[0];
+
+
+    if (!user.password_hash) {
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Account password is not configured. Please create a new account."
+        });
+
+    }
+
+
+    const passwordMatch =
+        await bcrypt.compare(
             password,
             user.password_hash
         );
 
-        if (!passwordMatch) {
-            return res.status(401).json({
-                success: false,
-                message: "Invalid email/phone or password."
-            });
-        }
 
-        if (
-            user.account_status &&
-            user.account_status.toLowerCase() === "suspended"
-        ) {
-            return res.status(403).json({
-                success: false,
-                message: "Your account has been suspended."
-            });
-        }
+    if (!passwordMatch) {
 
-        if (!process.env.JWT_SECRET) {
-            console.error("JWT_SECRET is missing.");
+        return res.status(401).json({
+            success: false,
+            message:
+                "Invalid email/phone or password."
+        });
 
-            return res.status(500).json({
-                success: false,
-                message: "Server configuration error."
-            });
-        }
+    }
 
-        const token = jwt.sign(
+
+    if (
+        user.account_status &&
+        user.account_status.toLowerCase() ===
+            "suspended"
+    ) {
+
+        return res.status(403).json({
+            success: false,
+            message:
+                "Your account has been suspended."
+        });
+
+    }
+
+
+    if (!process.env.JWT_SECRET) {
+
+        console.error(
+            "JWT_SECRET is missing."
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Server configuration error."
+        });
+
+    }
+
+
+    const token =
+        jwt.sign(
             {
                 id: user.id,
                 email: user.email,
@@ -240,32 +423,66 @@ router.post("/login", async (req, res) => {
             }
         );
 
-        res.json({
-            success: true,
-            message: "Login successful.",
-            token,
-            user: {
-                id: user.id,
-                full_name: user.full_name,
-                phone: user.phone,
-                email: user.email,
-                account_status: user.account_status,
-                registration_paid: user.registration_paid,
-                referral_code: user.referral_code,
-                created_at: user.created_at
-            }
-        });
 
-    } catch (error) {
+    res.json({
 
-        console.error("Login error:", error);
+        success: true,
 
-        res.status(500).json({
-            success: false,
-            message: "Server error. Please try again."
-        });
-    }
+        message:
+            "Login successful.",
+
+        token,
+
+        user: {
+
+            id:
+                user.id,
+
+            full_name:
+                user.full_name,
+
+            phone:
+                user.phone,
+
+            email:
+                user.email,
+
+            account_status:
+                user.account_status,
+
+            registration_paid:
+                user.registration_paid,
+
+            referral_code:
+                user.referral_code,
+
+            referred_by:
+                user.referred_by,
+
+            created_at:
+                user.created_at
+
+        }
+
+    });
+
+
+} catch (error) {
+
+    console.error(
+        "Login error:",
+        error
+    );
+
+
+    res.status(500).json({
+        success: false,
+        message:
+            "Server error. Please try again."
+    });
+
+}
+
 });
-
 
 module.exports = router;
