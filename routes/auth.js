@@ -18,7 +18,6 @@ router.post("/register", async (req, res) => {
             password
         } = req.body;
 
-        // Validate required fields
         if (!full_name || !phone || !email || !password) {
             return res.status(400).json({
                 success: false,
@@ -26,7 +25,6 @@ router.post("/register", async (req, res) => {
             });
         }
 
-        // Password validation
         if (password.length < 6) {
             return res.status(400).json({
                 success: false,
@@ -38,7 +36,6 @@ router.post("/register", async (req, res) => {
         const cleanPhone = phone.trim();
         const cleanEmail = email.trim().toLowerCase();
 
-        // Check if user already exists
         const existingUser = await pool.query(
             `SELECT id
              FROM users
@@ -53,14 +50,8 @@ router.post("/register", async (req, res) => {
             });
         }
 
-        // Hash password
         const passwordHash = await bcrypt.hash(password, 12);
 
-        /*
-         * Register user.
-         *
-         * Referral code is intentionally NOT required.
-         */
         const result = await pool.query(
             `INSERT INTO users
              (full_name, phone, email, password_hash)
@@ -118,7 +109,6 @@ router.post("/login", async (req, res) => {
 
         const cleanIdentifier = identifier.trim().toLowerCase();
 
-        // Find user by email OR phone
         const result = await pool.query(
             `SELECT
                 id,
@@ -145,7 +135,6 @@ router.post("/login", async (req, res) => {
 
         const user = result.rows[0];
 
-        // Make sure password exists
         if (!user.password_hash) {
             return res.status(500).json({
                 success: false,
@@ -153,7 +142,6 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        // Check password
         const passwordMatch = await bcrypt.compare(
             password,
             user.password_hash
@@ -166,7 +154,6 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        // Check account status
         if (user.account_status === "suspended") {
             return res.status(403).json({
                 success: false,
@@ -174,7 +161,6 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        // JWT secret
         const jwtSecret = process.env.JWT_SECRET;
 
         if (!jwtSecret) {
@@ -186,7 +172,6 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        // Create token
         const token = jwt.sign(
             {
                 id: user.id,
@@ -199,7 +184,6 @@ router.post("/login", async (req, res) => {
             }
         );
 
-        // Never send password hash to frontend
         delete user.password_hash;
 
         return res.status(200).json({
@@ -222,122 +206,6 @@ router.post("/login", async (req, res) => {
 
 module.exports = router;
 
-Also change your "db.js"
+Important: Your "db.js" should remain the version you just installed. Don't put the "db.js" code inside "auth.js".
 
-Your current "db.js" tries to create a table containing referral fields, but your existing table doesn't have them. For now, use this simpler version:
-
-:::writing{variant="standard" id="74106" title="New db.js"}
-
-const { Pool } = require("pg");
-const dotenv = require("dotenv");
-
-dotenv.config();
-
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-
-    ssl: process.env.NODE_ENV === "production"
-        ? { rejectUnauthorized: false }
-        : false
-});
-
-pool.on("error", (err) => {
-    console.error("Unexpected PostgreSQL error:", err);
-});
-
-async function initializeDatabase() {
-    try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                full_name VARCHAR(100) NOT NULL,
-                phone VARCHAR(20) UNIQUE NOT NULL,
-                email VARCHAR(150) UNIQUE NOT NULL,
-                password_hash TEXT,
-                account_status VARCHAR(20) DEFAULT 'pending',
-                registration_paid BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-
-        // Add missing columns safely to an existing users table
-        await pool.query(`
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS password_hash TEXT;
-        `);
-
-        await pool.query(`
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) DEFAULT 'pending';
-        `);
-
-        await pool.query(`
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS registration_paid BOOLEAN DEFAULT FALSE;
-        `);
-
-        await pool.query(`
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-        `);
-
-        console.log("Database initialized successfully.");
-
-    } catch (error) {
-        console.error("Database initialization error:", error);
-    }
-}
-
-initializeDatabase();
-
-module.exports = pool;
-
-Keep your "server.js"
-
-Your current "server.js" can stay as it is:
-
-const express = require("express");
-const cors = require("cors");
-const dotenv = require("dotenv");
-
-dotenv.config();
-
-const app = express();
-
-app.use(cors());
-app.use(express.json());
-
-const authRoutes = require("./routes/auth");
-app.use("/api/auth", authRoutes);
-
-app.get("/", (req, res) => {
-    res.json({
-        success: true,
-        message: "CheryEarn Backend is running",
-        status: "online"
-    });
-});
-
-const PORT = process.env.PORT || 10000;
-
-app.listen(PORT, () => {
-    console.log(`CheryEarn backend running on port ${PORT}`);
-});
-
-After replacing the two files
-
-1. Save "routes/auth.js".
-2. Save "db.js".
-3. Push/commit the changes to GitHub.
-4. Let Render redeploy.
-5. Check the logs.
-6. Try registration first.
-7. Then try login.
-
-You should no longer get the:
-
-column "referral_code" does not exist
-
-error.
-
-One important point: this assumes your existing "users" table has "full_name", "phone", "email", and "password_hash" (the last one is added automatically by "db.js"). If registration gives another database-column error, send me that exact Render log and we'll fix the next mismatch.
+After saving "auth.js", commit/push it and let Render redeploy. The "SyntaxError: Unexpected identifier 'change'" should disappear.
