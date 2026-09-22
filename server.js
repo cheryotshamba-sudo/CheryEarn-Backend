@@ -25,12 +25,14 @@ const FRONTEND_URL =
 // ======================================================
 //
 // TEST MODE:
+//
 // Registration = KSh 10
 // 1st upline = KSh 5
 // 2nd upline = KSh 2.50
 // Company = KSh 2.50
 //
 // LATER:
+//
 // Registration = KSh 200
 // 1st upline = KSh 100
 // 2nd upline = KSh 50
@@ -250,9 +252,7 @@ app.get(
                     LIMIT 1
                     `,
                     [
-                        Number(
-                            req.referralUserId
-                        )
+                        req.referralUserId
                     ]
                 );
 
@@ -357,10 +357,13 @@ app.get(
 //
 // Example:
 //
-// CheryEarn001-john-kamau
+// CheryEarn002-cheryot
 //
 // The CheryEarn number is used to find the actual
-// user and retrieve the internal referral code.
+// user and retrieve/create the internal referral code.
+//
+// The internal referral code is never shown in
+// the visible registration field.
 // ======================================================
 
 app.get(
@@ -372,8 +375,12 @@ app.get(
             const member =
                 String(
                     req.params.member || ""
-                );
+                ).trim();
 
+
+            // ==================================================
+            // CHECK MEMBER FORMAT
+            // ==================================================
 
             const match =
                 member.match(
@@ -394,6 +401,10 @@ app.get(
 
             }
 
+
+            // ==================================================
+            // GET CHERYEARN NUMBER
+            // ==================================================
 
             const cheryearnNumber =
                 Number(
@@ -419,6 +430,10 @@ app.get(
 
             }
 
+
+            // ==================================================
+            // FIND REFERRER
+            // ==================================================
 
             const userResult =
                 await pool.query(
@@ -458,21 +473,201 @@ app.get(
                 userResult.rows[0];
 
 
+            // ==================================================
+            // GET OR CREATE INTERNAL REFERRAL CODE
+            // ==================================================
+
+            let internalReferralCode =
+                user.referral_code;
+
+
+            /*
+             * Some existing users may have been
+             * created before referral codes were
+             * properly assigned.
+             *
+             * If missing, create one automatically.
+             */
+
+            if (!internalReferralCode) {
+
+                let created =
+                    false;
+
+                let attempts =
+                    0;
+
+
+                while (
+                    !created &&
+                    attempts < 10
+                ) {
+
+                    attempts++;
+
+
+                    const generatedCode =
+                        "CE" +
+                        crypto
+                            .randomBytes(8)
+                            .toString("hex")
+                            .toUpperCase();
+
+
+                    try {
+
+                        const updateResult =
+                            await pool.query(
+                                `
+                                UPDATE users
+                                SET
+                                    referral_code = $1
+                                WHERE id = $2
+                                  AND (
+                                      referral_code IS NULL
+                                      OR referral_code = ''
+                                  )
+                                RETURNING
+                                    referral_code
+                                `,
+                                [
+                                    generatedCode,
+                                    user.id
+                                ]
+                            );
+
+
+                        if (
+                            updateResult.rows.length > 0
+                        ) {
+
+                            internalReferralCode =
+                                updateResult.rows[0]
+                                    .referral_code;
+
+                            created =
+                                true;
+
+                        } else {
+
+                            /*
+                             * Another request may have
+                             * created the code at the
+                             * same time.
+                             */
+
+                            const refreshedResult =
+                                await pool.query(
+                                    `
+                                    SELECT
+                                        referral_code
+                                    FROM users
+                                    WHERE id = $1
+                                    LIMIT 1
+                                    `,
+                                    [
+                                        user.id
+                                    ]
+                                );
+
+
+                            if (
+                                refreshedResult.rows.length > 0 &&
+                                refreshedResult.rows[0]
+                                    .referral_code
+                            ) {
+
+                                internalReferralCode =
+                                    refreshedResult.rows[0]
+                                        .referral_code;
+
+                                created =
+                                    true;
+
+                            }
+
+                        }
+
+
+                    } catch (updateError) {
+
+                        /*
+                         * If the generated code already
+                         * exists, generate another one.
+                         */
+
+                        if (
+                            updateError.code ===
+                            "23505"
+                        ) {
+
+                            continue;
+
+                        }
+
+
+                        throw updateError;
+
+                    }
+
+                }
+
+            }
+
+
+            // ==================================================
+            // FINAL SAFETY CHECK
+            // ==================================================
+
+            if (!internalReferralCode) {
+
+                return res.status(500).json({
+
+                    success: false,
+
+                    message:
+                        "Unable to create referral code for this member."
+
+                });
+
+            }
+
+
+            // ==================================================
+            // SUCCESS
+            // ==================================================
+
             return res.json({
 
                 success: true,
 
+                /*
+                 * INTERNAL REFERRAL CODE
+                 * used by registration.
+                 */
+
+                referralCode:
+                    internalReferralCode,
+
+                /*
+                 * Actual database user.
+                 */
+
                 referrerUserId:
                     user.id,
 
-                referralCode:
-                    user.referral_code,
+                /*
+                 * Public information.
+                 */
 
                 cheryearnNumber:
                     user.cheryearn_number,
 
                 fullName:
-                    user.full_name
+                    user.full_name,
+
+                member:
+                    member
 
             });
 
@@ -783,7 +978,9 @@ async function processCompletedRegistrationPayment(
         }
 
 
-        // Mark payment completed
+        // ==================================================
+        // MARK PAYMENT COMPLETED
+        // ==================================================
 
         await client.query(
             `
@@ -803,7 +1000,9 @@ async function processCompletedRegistrationPayment(
         );
 
 
-        // Activate user
+        // ==================================================
+        // ACTIVATE USER
+        // ==================================================
 
         await client.query(
             `
@@ -920,9 +1119,11 @@ async function processCompletedRegistrationPayment(
         console.log(
             "=========================================="
         );
+
         console.log(
             " CHERYEARN REGISTRATION PAYMENT COMPLETED"
         );
+
         console.log(
             "=========================================="
         );
@@ -1046,16 +1247,12 @@ app.post(
             }
 
 
-            const numericUserId =
-                Number(userId);
+            const userIdValue =
+                String(userId)
+                    .trim();
 
 
-            if (
-                !Number.isInteger(
-                    numericUserId
-                ) ||
-                numericUserId <= 0
-            ) {
+            if (!userIdValue) {
 
                 return res.status(400).json({
 
@@ -1117,7 +1314,7 @@ app.post(
                     LIMIT 1
                     `,
                     [
-                        numericUserId
+                        userIdValue
                     ]
                 );
 
@@ -1173,7 +1370,7 @@ app.post(
                     LIMIT 1
                     `,
                     [
-                        numericUserId
+                        userIdValue
                     ]
                 );
 
@@ -1233,7 +1430,7 @@ app.post(
                         payment_reference
                     `,
                     [
-                        numericUserId,
+                        userIdValue,
                         REGISTRATION_FEE,
                         reference,
                         normalizedPhone,
@@ -1256,9 +1453,11 @@ app.post(
             console.log(
                 "================================="
             );
+
             console.log(
                 "       CHERYEARN PAYLOR STK"
             );
+
             console.log(
                 "================================="
             );
@@ -1270,7 +1469,7 @@ app.post(
 
             console.log(
                 "User ID:",
-                numericUserId
+                userIdValue
             );
 
             console.log(
@@ -1455,12 +1654,10 @@ app.post(
                 "===== PAYLOR STK ERROR ====="
             );
 
-
             console.log(
                 error.response?.data ||
                 error.message
             );
-
 
             console.log("");
 
@@ -1509,7 +1706,6 @@ app.post(
             console.log(
                 "===== WEBHOOK DEBUG ====="
             );
-
 
             console.log(
                 "Webhook signature:",
@@ -1964,7 +2160,7 @@ app.post(
 
 
             // ==================================================
-            // IF PAYMENT IS COMPLETED
+            // PAYMENT COMPLETED
             // ==================================================
 
             if (completed) {
@@ -1990,362 +2186,12 @@ app.post(
                             LIMIT 1
                             `,
                             [
-                                Number(userId)
+                                String(
+                                    userId || ""
+                                )
                             ]
                         );
 
 
                     if (
-                        lookupResult.rows.length > 0
-                    ) {
-
-                        paymentReference =
-                            lookupResult.rows[0]
-                                .payment_reference;
-
-                    }
-
-                }
-
-
-                if (!paymentReference) {
-
-                    return res.status(404).json({
-
-                        success: false,
-
-                        paid: false,
-
-                        message:
-                            "Payment completed by gateway, but payment reference was not found."
-
-                    });
-
-                }
-
-
-                try {
-
-                    const processingResult =
-                        await processCompletedRegistrationPayment(
-                            paymentReference,
-                            {
-                                ...gatewayPayment,
-                                reference:
-                                    paymentReference,
-                                transactionId:
-                                    gatewayPayment.transactionId ||
-                                    transactionId,
-                                amount:
-                                    gatewayPayment.amount
-                            }
-                        );
-
-
-                    console.log(
-                        "Payment status processing result:",
-                        processingResult
-                    );
-
-
-                } catch (processingError) {
-
-                    console.error(
-                        "Payment status processing error:",
-                        processingError
-                    );
-
-
-                    return res.status(500).json({
-
-                        success: false,
-
-                        paid: false,
-
-                        message:
-                            "Payment was completed but account processing failed."
-
-                    });
-
-                }
-
-
-                return res.json({
-
-                    success: true,
-
-                    paid: true,
-
-                    status:
-                        "COMPLETED",
-
-                    transactionId:
-                        transactionId,
-
-                    reference:
-                        paymentReference,
-
-                    userId:
-                        userId || null,
-
-                    data:
-                        gatewayPayment
-
-                });
-
-            }
-
-
-            // ==================================================
-            // FAILED / CANCELLED
-            // ==================================================
-
-            if (
-                gatewayStatus === "FAILED" ||
-                gatewayStatus === "CANCELLED" ||
-                gatewayStatus === "CANCELED"
-            ) {
-
-                if (reference) {
-
-                    await pool.query(
-                        `
-                        UPDATE registration_payments
-                        SET
-                            status = $1,
-                            gateway_response = $2
-                        WHERE payment_reference = $3
-                          AND status = 'PENDING'
-                        `,
-                        [
-                            gatewayStatus,
-
-                            JSON.stringify(
-                                gatewayPayment
-                            ),
-
-                            reference
-
-                        ]
-                    );
-
-                }
-
-
-                return res.json({
-
-                    success: true,
-
-                    paid: false,
-
-                    status:
-                        gatewayStatus,
-
-                    transactionId:
-                        transactionId,
-
-                    reference:
-                        reference || null,
-
-                    data:
-                        gatewayPayment
-
-                });
-
-            }
-
-
-            // ==================================================
-            // STILL PENDING
-            // ==================================================
-
-            return res.json({
-
-                success: true,
-
-                paid: false,
-
-                status:
-                    gatewayStatus ||
-                    "PENDING",
-
-                transactionId:
-                    transactionId,
-
-                reference:
-                    reference || null,
-
-                data:
-                    gatewayPayment
-
-            });
-
-
-        } catch (error) {
-
-            console.log("");
-            console.log(
-                "===== PAYMENT STATUS ERROR ====="
-            );
-
-
-            console.log(
-                error.response?.data ||
-                error.message
-            );
-
-
-            console.log("");
-
-
-            return res.status(
-
-                error.response?.status ||
-                500
-
-            ).json({
-
-                success: false,
-
-                paid: false,
-
-                message:
-                    error.response?.data?.message ||
-                    "Unable to check payment status.",
-
-                data:
-                    error.response?.data ||
-                    null
-
-            });
-
-        }
-
-    }
-);
-
-
-// ======================================================
-// 404 HANDLER
-// ======================================================
-
-app.use(
-    (req, res) => {
-
-        res.status(404).json({
-
-            success: false,
-
-            message:
-                "Route not found."
-
-        });
-
-    }
-);
-
-
-// ======================================================
-// GLOBAL ERROR HANDLER
-// ======================================================
-
-app.use(
-    (error, req, res, next) => {
-
-        console.error(
-            "Unhandled server error:",
-            error
-        );
-
-
-        if (res.headersSent) {
-
-            return next(error);
-
-        }
-
-
-        return res.status(500).json({
-
-            success: false,
-
-            message:
-                "Internal server error."
-
-        });
-
-    }
-);
-
-
-// ======================================================
-// START SERVER
-// ======================================================
-
-const PORT =
-    process.env.PORT || 10000;
-
-
-app.listen(
-    PORT,
-    () => {
-
-        console.log("");
-        console.log(
-            "=========================================="
-        );
-
-        console.log(
-            "       CHERYEARN BACKEND"
-        );
-
-        console.log(
-            "=========================================="
-        );
-
-        console.log(
-            "Port:",
-            PORT
-        );
-
-        console.log(
-            "Frontend:",
-            FRONTEND_URL
-        );
-
-        console.log(
-            "Registration Fee:",
-            REGISTRATION_FEE
-        );
-
-        console.log(
-            "1st Upline:",
-            FIRST_UPLINE_AMOUNT
-        );
-
-        console.log(
-            "2nd Upline:",
-            SECOND_UPLINE_AMOUNT
-        );
-
-        console.log(
-            "Company:",
-            COMPANY_AMOUNT
-        );
-
-        console.log(
-            "Payment Gateway:",
-            "Paylor"
-        );
-
-        console.log(
-            "Status:",
-            "ONLINE"
-        );
-
-        console.log(
-            "=========================================="
-        );
-
-    }
-);
+                        lookupResult.rows.length
