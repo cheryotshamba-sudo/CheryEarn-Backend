@@ -5,18 +5,9 @@ const pool = require("../db");
 
 const router = express.Router();
 
-/* =========================
-   REGISTER
-========================= */
-
 router.post("/register", async (req, res) => {
     try {
-        const {
-            full_name,
-            phone,
-            email,
-            password
-        } = req.body;
+        const { full_name, phone, email, password } = req.body;
 
         if (!full_name || !phone || !email || !password) {
             return res.status(400).json({
@@ -37,8 +28,7 @@ router.post("/register", async (req, res) => {
         const cleanEmail = email.trim().toLowerCase();
 
         const existingUser = await pool.query(
-            `SELECT id
-             FROM users
+            `SELECT id FROM users
              WHERE phone = $1 OR email = $2`,
             [cleanPhone, cleanEmail]
         );
@@ -64,15 +54,10 @@ router.post("/register", async (req, res) => {
                 account_status,
                 registration_paid,
                 created_at`,
-            [
-                cleanName,
-                cleanPhone,
-                cleanEmail,
-                passwordHash
-            ]
+            [cleanName, cleanPhone, cleanEmail, passwordHash]
         );
 
-        return res.status(201).json({
+        res.status(201).json({
             success: true,
             message: "Registration successful.",
             user: result.rows[0]
@@ -81,7 +66,7 @@ router.post("/register", async (req, res) => {
     } catch (error) {
         console.error("Registration error:", error);
 
-        return res.status(500).json({
+        res.status(500).json({
             success: false,
             message: "Server error. Please try again."
         });
@@ -89,16 +74,9 @@ router.post("/register", async (req, res) => {
 });
 
 
-/* =========================
-   LOGIN
-========================= */
-
 router.post("/login", async (req, res) => {
     try {
-        const {
-            identifier,
-            password
-        } = req.body;
+        const { identifier, password } = req.body;
 
         if (!identifier || !password) {
             return res.status(400).json({
@@ -161,9 +139,7 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        const jwtSecret = process.env.JWT_SECRET;
-
-        if (!jwtSecret) {
+        if (!process.env.JWT_SECRET) {
             console.error("JWT_SECRET is not configured.");
 
             return res.status(500).json({
@@ -178,7 +154,7 @@ router.post("/login", async (req, res) => {
                 email: user.email,
                 phone: user.phone
             },
-            jwtSecret,
+            process.env.JWT_SECRET,
             {
                 expiresIn: "7d"
             }
@@ -186,7 +162,7 @@ router.post("/login", async (req, res) => {
 
         delete user.password_hash;
 
-        return res.status(200).json({
+        res.status(200).json({
             success: true,
             message: "Login successful.",
             token,
@@ -196,7 +172,7 @@ router.post("/login", async (req, res) => {
     } catch (error) {
         console.error("Login error:", error);
 
-        return res.status(500).json({
+        res.status(500).json({
             success: false,
             message: "Server error. Please try again."
         });
@@ -205,7 +181,3 @@ router.post("/login", async (req, res) => {
 
 
 module.exports = router;
-
-Important: Your "db.js" should remain the version you just installed. Don't put the "db.js" code inside "auth.js".
-
-After saving "auth.js", commit/push it and let Render redeploy. The "SyntaxError: Unexpected identifier 'change'" should disappear.
