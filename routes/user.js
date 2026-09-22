@@ -156,8 +156,6 @@ function getTransactionCode(
     }
 
 
-    // Check common nested objects
-
     const nestedObjects = [
 
         data.data,
@@ -202,8 +200,6 @@ function getTransactionCode(
 
     }
 
-
-    // Always have a fallback reference
 
     return paymentReference || "N/A";
 
@@ -292,28 +288,6 @@ router.get(
 
             const user =
                 result.rows[0];
-
-
-            // ==========================================
-            // CHERYEARN DISPLAY NUMBER
-            // ==========================================
-
-            const cheryearnId =
-                formatCheryEarnNumber(
-                    user.cheryearn_number
-                );
-
-
-            // ==========================================
-            // ORIGINAL CHERYEARN REFERRAL LINK
-            // ==========================================
-
-            const referralLink =
-                cheryearnId && user.username
-                    ? `https://cheryearn1.onrender.com/register.html?member=${encodeURIComponent(
-                        cheryearnId + "-" + user.username
-                    )}`
-                    : "";
 
 
             // ==========================================
@@ -612,7 +586,7 @@ router.get(
 
             const directEarnings =
                 Number(
-                    directEarningsResult.rows[0].total || 0
+                    directEarningsResult.rows[0].total
                 );
 
 
@@ -639,12 +613,12 @@ router.get(
 
             const indirectEarnings =
                 Number(
-                    indirectEarningsResult.rows[0].total || 0
+                    indirectEarningsResult.rows[0].total
                 );
 
 
             // ==========================================
-            // TOTAL CREDITED EARNINGS
+            // TOTAL EARNINGS
             // ==========================================
 
             const totalEarnings =
@@ -658,6 +632,39 @@ router.get(
 
             const balance =
                 totalEarnings;
+
+
+            // ==========================================
+            // CHERYEARN DISPLAY NUMBER
+            // ==========================================
+
+            const cheryearnId =
+                formatCheryEarnNumber(
+                    user.cheryearn_number
+                );
+
+
+            // ==========================================
+            // REFERRAL LINK
+            // ==========================================
+            //
+            // IMPORTANT:
+            // Keep the original CheryEarn referral
+            // link format.
+            //
+            // Example:
+            //
+            // https://cheryearn1.onrender.com/register.html?member=CheryEarn002-cheryot
+            //
+            // ==========================================
+
+            const referralLink =
+                cheryearnId &&
+                user.username
+                    ? `${"https://cheryearn1.onrender.com"}/register.html?member=${encodeURIComponent(
+                        cheryearnId + "-" + user.username
+                    )}`
+                    : "";
 
 
             // ==========================================
@@ -781,7 +788,42 @@ router.get(
                 success: true,
 
                 // ======================================
-                // USER
+                // TOP LEVEL DATA
+                // ======================================
+
+                balance:
+                    balance,
+
+                availableBalance:
+                    balance,
+
+                totalEarnings:
+                    totalEarnings,
+
+                directEarnings:
+                    directEarnings,
+
+                indirectEarnings:
+                    indirectEarnings,
+
+                referralLink:
+                    referralLink,
+
+                totalReferrals:
+                    totalReferrals,
+
+                directReferrals:
+                    directReferrals,
+
+                indirectReferrals:
+                    indirectReferrals,
+
+                recentActivity:
+                    recentActivity,
+
+
+                // ======================================
+                // USER DATA
                 // ======================================
 
                 user: {
@@ -822,9 +864,6 @@ router.get(
                     referralLink:
                         referralLink,
 
-                    created_at:
-                        user.created_at,
-
                     balance:
                         balance,
 
@@ -841,64 +880,12 @@ router.get(
                         indirectEarnings,
 
                     totalReferrals:
-                        totalReferrals
+                        totalReferrals,
 
-                },
+                    created_at:
+                        user.created_at
 
-
-                // ======================================
-                // BALANCE
-                // ======================================
-
-                balance:
-                    balance,
-
-                availableBalance:
-                    balance,
-
-
-                // ======================================
-                // EARNINGS
-                // ======================================
-
-                totalEarnings:
-                    totalEarnings,
-
-                directEarnings:
-                    directEarnings,
-
-                indirectEarnings:
-                    indirectEarnings,
-
-
-                // ======================================
-                // REFERRAL LINK
-                // ======================================
-
-                referralLink:
-                    referralLink,
-
-
-                // ======================================
-                // REFERRALS
-                // ======================================
-
-                totalReferrals:
-                    totalReferrals,
-
-                directReferrals:
-                    directReferrals,
-
-                indirectReferrals:
-                    indirectReferrals,
-
-
-                // ======================================
-                // ACTIVITY
-                // ======================================
-
-                recentActivity:
-                    recentActivity
+                }
 
             });
 
