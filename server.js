@@ -30,7 +30,7 @@ const FRONTEND_URL =
 // 2nd upline = KSh 2.50
 // Company = KSh 2.50
 //
-// Later:
+// LATER:
 // Registration = KSh 200
 // 1st upline = KSh 100
 // 2nd upline = KSh 50
@@ -80,6 +80,45 @@ app.use(
 app.use(
     "/api/user",
     userRoutes
+);
+
+
+// ======================================================
+// HEALTH CHECK
+// ======================================================
+
+app.get(
+    "/",
+    (req, res) => {
+
+        res.json({
+
+            success: true,
+
+            service:
+                "CheryEarn Backend",
+
+            paymentGateway:
+                "Paylor",
+
+            registrationFee:
+                REGISTRATION_FEE,
+
+            firstUpline:
+                FIRST_UPLINE_AMOUNT,
+
+            secondUpline:
+                SECOND_UPLINE_AMOUNT,
+
+            company:
+                COMPANY_AMOUNT,
+
+            status:
+                "online"
+
+        });
+
+    }
 );
 
 
@@ -187,9 +226,9 @@ function makeSafeName(name) {
 //
 // Example:
 //
-// https://cheryearn1.onrender.com/register.html?member=cheryearn001-john-kamau
+// https://cheryearn1.onrender.com/register.html?member=CheryEarn001-john-kamau
 //
-// The random referral code is NOT exposed.
+// The internal random referral code is NOT exposed.
 // ======================================================
 
 app.get(
@@ -281,11 +320,9 @@ app.get(
                 success: true,
 
                 referralLink:
-
                     referralLink,
 
                 member:
-
                     member
 
             });
@@ -318,15 +355,12 @@ app.get(
 // RESOLVE FRIENDLY REFERRAL LINK
 // ======================================================
 //
-// The visible link contains:
+// Example:
 //
-// CheryEarn001-John-Kamau
+// CheryEarn001-john-kamau
 //
-// This endpoint converts the CheryEarn number
-// back to the INTERNAL referral code.
-//
-// The random referral code never appears
-// in the user's referral URL.
+// The CheryEarn number is used to find the actual
+// user and retrieve the internal referral code.
 // ======================================================
 
 app.get(
@@ -471,21 +505,6 @@ app.get(
 // ======================================================
 
 app.get(
-    "/",
-    (req, res) => {
-
-        res.sendFile(
-            path.join(
-                __dirname,
-                "index.html"
-            )
-        );
-
-    }
-);
-
-
-app.get(
     "/delivery.html",
     (req, res) => {
 
@@ -552,7 +571,7 @@ function isValidKenyanPhone(phone) {
 
 
 // ======================================================
-// CHECK IF PAYMENT IS COMPLETED
+// CHECK COMPLETED STATUS
 // ======================================================
 
 function isCompletedStatus(status) {
@@ -638,6 +657,8 @@ async function processCompletedRegistrationPayment(
             paymentResult.rows[0];
 
 
+        // Prevent duplicate commission processing
+
         if (
             String(payment.status)
                 .toUpperCase() ===
@@ -650,9 +671,16 @@ async function processCompletedRegistrationPayment(
 
 
             return {
-                alreadyProcessed: true,
-                paymentId: payment.id,
-                userId: payment.user_id
+
+                alreadyProcessed:
+                    true,
+
+                paymentId:
+                    payment.id,
+
+                userId:
+                    payment.user_id
+
             };
 
         }
@@ -755,6 +783,8 @@ async function processCompletedRegistrationPayment(
         }
 
 
+        // Mark payment completed
+
         await client.query(
             `
             UPDATE registration_payments
@@ -773,6 +803,8 @@ async function processCompletedRegistrationPayment(
         );
 
 
+        // Activate user
+
         await client.query(
             `
             UPDATE users
@@ -786,6 +818,10 @@ async function processCompletedRegistrationPayment(
             ]
         );
 
+
+        // ==================================================
+        // FIRST UPLINE
+        // ==================================================
 
         if (firstUplineId) {
 
@@ -828,6 +864,10 @@ async function processCompletedRegistrationPayment(
 
         }
 
+
+        // ==================================================
+        // SECOND UPLINE
+        // ==================================================
 
         if (secondUplineId) {
 
@@ -933,11 +973,22 @@ async function processCompletedRegistrationPayment(
 
 
         return {
-            alreadyProcessed: false,
-            paymentId: payment.id,
-            userId: payment.user_id,
-            firstUplineId,
-            secondUplineId
+
+            alreadyProcessed:
+                false,
+
+            paymentId:
+                payment.id,
+
+            userId:
+                payment.user_id,
+
+            firstUplineId:
+                firstUplineId,
+
+            secondUplineId:
+                secondUplineId
+
         };
 
 
@@ -1313,7 +1364,10 @@ app.post(
 
 
             const transactionId =
-                response.data?.transactionId;
+                response.data?.transactionId ||
+                response.data?.transaction_id ||
+                response.data?.id ||
+                response.data?.checkout_request_id;
 
 
             const status =
@@ -1463,14 +1517,24 @@ app.post(
             );
 
 
-            console.log(
-                "Webhook headers:",
-                req.headers
-            );
-
-
             const rawBody =
                 req.body;
+
+
+            if (
+                !Buffer.isBuffer(rawBody)
+            ) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Invalid webhook body."
+
+                });
+
+            }
 
 
             console.log(
@@ -1528,8 +1592,7 @@ app.post(
                 crypto
                     .createHmac(
                         "sha256",
-                        process.env
-                            .PAYLOR_WEBHOOK_SECRET
+                        process.env.PAYLOR_WEBHOOK_SECRET
                     )
                     .update(rawBody)
                     .digest("hex");
@@ -1593,10 +1656,28 @@ app.post(
             }
 
 
-            const payment =
-                JSON.parse(
-                    rawBody.toString("utf8")
-                );
+            let payment;
+
+
+            try {
+
+                payment =
+                    JSON.parse(
+                        rawBody.toString("utf8")
+                    );
+
+            } catch (parseError) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Invalid webhook JSON."
+
+                });
+
+            }
 
 
             console.log("");
@@ -1635,6 +1716,7 @@ app.post(
                 console.log(
                     "Transaction ID:",
                     payment.transactionId ||
+                    payment.transaction_id ||
                     payment.id
                 );
 
@@ -1688,16 +1770,17 @@ app.post(
             }
 
 
+            const paymentStatus =
+                String(
+                    payment.status || ""
+                )
+                    .toUpperCase();
+
+
             if (
-                String(payment.status)
-                    .toUpperCase() ===
-                    "FAILED" ||
-                String(payment.status)
-                    .toUpperCase() ===
-                    "CANCELLED" ||
-                String(payment.status)
-                    .toUpperCase() ===
-                    "CANCELED"
+                paymentStatus === "FAILED" ||
+                paymentStatus === "CANCELLED" ||
+                paymentStatus === "CANCELED"
             ) {
 
                 console.log(
@@ -1717,15 +1800,14 @@ app.post(
                           AND status = 'PENDING'
                         `,
                         [
-                            String(
-                                payment.status
-                            ).toUpperCase(),
+                            paymentStatus,
 
                             JSON.stringify(
                                 payment
                             ),
 
                             payment.reference
+
                         ]
                     );
 
@@ -1829,10 +1911,441 @@ app.post(
             const response =
                 await axios.get(
 
-                    `https://api.paylorke.com/api/v1/merchants/payments/transactions/${encodeURIComponent(transactionId)}`,
+                    `https://api.paylorke.com/api/v1/merchants/payments/transactions/${encodeURIComponent(
+                        transactionId
+                    )}`,
 
                     {
 
                         headers: {
 
                             Authorization:
+                                `Bearer ${process.env.PAYLOR_API_KEY}`,
+
+                            Accept:
+                                "application/json"
+
+                        }
+
+                    }
+
+                );
+
+
+            console.log("");
+            console.log(
+                "===== PAYLOR PAYMENT STATUS ====="
+            );
+
+            console.log(
+                response.data
+            );
+
+
+            const gatewayPayment =
+                response.data || {};
+
+
+            const gatewayStatus =
+                String(
+                    gatewayPayment.status ||
+                    gatewayPayment.paymentStatus ||
+                    gatewayPayment.data?.status ||
+                    ""
+                )
+                    .trim()
+                    .toUpperCase();
+
+
+            const completed =
+                isCompletedStatus(
+                    gatewayStatus
+                );
+
+
+            // ==================================================
+            // IF PAYMENT IS COMPLETED
+            // ==================================================
+
+            if (completed) {
+
+                let paymentReference =
+                    reference ||
+                    gatewayPayment.reference ||
+                    gatewayPayment.paymentReference ||
+                    gatewayPayment.data?.reference;
+
+
+                if (!paymentReference) {
+
+                    const lookupResult =
+                        await pool.query(
+                            `
+                            SELECT
+                                payment_reference
+                            FROM registration_payments
+                            WHERE user_id = $1
+                              AND status = 'PENDING'
+                            ORDER BY id DESC
+                            LIMIT 1
+                            `,
+                            [
+                                Number(userId)
+                            ]
+                        );
+
+
+                    if (
+                        lookupResult.rows.length > 0
+                    ) {
+
+                        paymentReference =
+                            lookupResult.rows[0]
+                                .payment_reference;
+
+                    }
+
+                }
+
+
+                if (!paymentReference) {
+
+                    return res.status(404).json({
+
+                        success: false,
+
+                        paid: false,
+
+                        message:
+                            "Payment completed by gateway, but payment reference was not found."
+
+                    });
+
+                }
+
+
+                try {
+
+                    const processingResult =
+                        await processCompletedRegistrationPayment(
+                            paymentReference,
+                            {
+                                ...gatewayPayment,
+                                reference:
+                                    paymentReference,
+                                transactionId:
+                                    gatewayPayment.transactionId ||
+                                    transactionId,
+                                amount:
+                                    gatewayPayment.amount
+                            }
+                        );
+
+
+                    console.log(
+                        "Payment status processing result:",
+                        processingResult
+                    );
+
+
+                } catch (processingError) {
+
+                    console.error(
+                        "Payment status processing error:",
+                        processingError
+                    );
+
+
+                    return res.status(500).json({
+
+                        success: false,
+
+                        paid: false,
+
+                        message:
+                            "Payment was completed but account processing failed."
+
+                    });
+
+                }
+
+
+                return res.json({
+
+                    success: true,
+
+                    paid: true,
+
+                    status:
+                        "COMPLETED",
+
+                    transactionId:
+                        transactionId,
+
+                    reference:
+                        paymentReference,
+
+                    userId:
+                        userId || null,
+
+                    data:
+                        gatewayPayment
+
+                });
+
+            }
+
+
+            // ==================================================
+            // FAILED / CANCELLED
+            // ==================================================
+
+            if (
+                gatewayStatus === "FAILED" ||
+                gatewayStatus === "CANCELLED" ||
+                gatewayStatus === "CANCELED"
+            ) {
+
+                if (reference) {
+
+                    await pool.query(
+                        `
+                        UPDATE registration_payments
+                        SET
+                            status = $1,
+                            gateway_response = $2
+                        WHERE payment_reference = $3
+                          AND status = 'PENDING'
+                        `,
+                        [
+                            gatewayStatus,
+
+                            JSON.stringify(
+                                gatewayPayment
+                            ),
+
+                            reference
+
+                        ]
+                    );
+
+                }
+
+
+                return res.json({
+
+                    success: true,
+
+                    paid: false,
+
+                    status:
+                        gatewayStatus,
+
+                    transactionId:
+                        transactionId,
+
+                    reference:
+                        reference || null,
+
+                    data:
+                        gatewayPayment
+
+                });
+
+            }
+
+
+            // ==================================================
+            // STILL PENDING
+            // ==================================================
+
+            return res.json({
+
+                success: true,
+
+                paid: false,
+
+                status:
+                    gatewayStatus ||
+                    "PENDING",
+
+                transactionId:
+                    transactionId,
+
+                reference:
+                    reference || null,
+
+                data:
+                    gatewayPayment
+
+            });
+
+
+        } catch (error) {
+
+            console.log("");
+            console.log(
+                "===== PAYMENT STATUS ERROR ====="
+            );
+
+
+            console.log(
+                error.response?.data ||
+                error.message
+            );
+
+
+            console.log("");
+
+
+            return res.status(
+
+                error.response?.status ||
+                500
+
+            ).json({
+
+                success: false,
+
+                paid: false,
+
+                message:
+                    error.response?.data?.message ||
+                    "Unable to check payment status.",
+
+                data:
+                    error.response?.data ||
+                    null
+
+            });
+
+        }
+
+    }
+);
+
+
+// ======================================================
+// 404 HANDLER
+// ======================================================
+
+app.use(
+    (req, res) => {
+
+        res.status(404).json({
+
+            success: false,
+
+            message:
+                "Route not found."
+
+        });
+
+    }
+);
+
+
+// ======================================================
+// GLOBAL ERROR HANDLER
+// ======================================================
+
+app.use(
+    (error, req, res, next) => {
+
+        console.error(
+            "Unhandled server error:",
+            error
+        );
+
+
+        if (res.headersSent) {
+
+            return next(error);
+
+        }
+
+
+        return res.status(500).json({
+
+            success: false,
+
+            message:
+                "Internal server error."
+
+        });
+
+    }
+);
+
+
+// ======================================================
+// START SERVER
+// ======================================================
+
+const PORT =
+    process.env.PORT || 10000;
+
+
+app.listen(
+    PORT,
+    () => {
+
+        console.log("");
+        console.log(
+            "=========================================="
+        );
+
+        console.log(
+            "       CHERYEARN BACKEND"
+        );
+
+        console.log(
+            "=========================================="
+        );
+
+        console.log(
+            "Port:",
+            PORT
+        );
+
+        console.log(
+            "Frontend:",
+            FRONTEND_URL
+        );
+
+        console.log(
+            "Registration Fee:",
+            REGISTRATION_FEE
+        );
+
+        console.log(
+            "1st Upline:",
+            FIRST_UPLINE_AMOUNT
+        );
+
+        console.log(
+            "2nd Upline:",
+            SECOND_UPLINE_AMOUNT
+        );
+
+        console.log(
+            "Company:",
+            COMPANY_AMOUNT
+        );
+
+        console.log(
+            "Payment Gateway:",
+            "Paylor"
+        );
+
+        console.log(
+            "Status:",
+            "ONLINE"
+        );
+
+        console.log(
+            "=========================================="
+        );
+
+    }
+);
