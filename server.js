@@ -3,6 +3,7 @@ const axios = require("axios");
 const cors = require("cors");
 const crypto = require("crypto");
 const path = require("path");
+const jwt = require("jsonwebtoken");
 
 const pool = require("./db");
 
@@ -24,14 +25,14 @@ const FRONTEND_URL =
 // TEMPORARY REGISTRATION PAYMENT SETTINGS
 // ======================================================
 //
-// TEST MODE:
+// TEST MODE
 //
 // Registration = KSh 10
 // 1st upline = KSh 5
 // 2nd upline = KSh 2.50
 // Company = KSh 2.50
 //
-// LATER:
+// LATER CHANGE TO:
 //
 // Registration = KSh 200
 // 1st upline = KSh 100
@@ -55,7 +56,7 @@ const COMPANY_AMOUNT = 2.50;
 app.use(cors());
 
 
-// Keep raw body for Paylor webhook signature verification
+// Paylor webhook needs the original raw body.
 
 app.use(
     "/paylor-callback",
@@ -65,13 +66,13 @@ app.use(
 );
 
 
-// Normal JSON for all other routes
+// Normal JSON for all other routes.
 
 app.use(express.json());
 
 
 // ======================================================
-// AUTHENTICATION & USER ROUTES
+// AUTH & USER ROUTES
 // ======================================================
 
 app.use(
@@ -125,10 +126,14 @@ app.get(
 
 
 // ======================================================
-// REFERRAL LINK AUTHENTICATION
+// AUTHENTICATE REFERRAL LINK REQUEST
 // ======================================================
 
-function authenticateReferralRequest(req, res, next) {
+function authenticateReferralRequest(
+    req,
+    res,
+    next
+) {
 
     try {
 
@@ -137,7 +142,9 @@ function authenticateReferralRequest(req, res, next) {
 
 
         if (
-            !authorization.startsWith("Bearer ")
+            !authorization.startsWith(
+                "Bearer "
+            )
         ) {
 
             return res.status(401).json({
@@ -154,10 +161,6 @@ function authenticateReferralRequest(req, res, next) {
 
         const token =
             authorization.substring(7);
-
-
-        const jwt =
-            require("jsonwebtoken");
 
 
         const decoded =
@@ -207,16 +210,27 @@ function authenticateReferralRequest(req, res, next) {
 
 
 // ======================================================
-// MAKE SAFE NAME FOR REFERRAL URL
+// MAKE SAFE NAME
 // ======================================================
 
 function makeSafeName(name) {
 
-    return String(name || "member")
+    return String(
+        name || "member"
+    )
         .trim()
-        .replace(/[^a-zA-Z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .replace(/-+/g, "-")
+        .replace(
+            /[^a-zA-Z0-9]+/g,
+            "-"
+        )
+        .replace(
+            /^-+|-+$/g,
+            ""
+        )
+        .replace(
+            /-+/g,
+            "-"
+        )
         .toLowerCase();
 
 }
@@ -230,7 +244,7 @@ function makeSafeName(name) {
 //
 // https://cheryearn1.onrender.com/register.html?member=CheryEarn001-john-kamau
 //
-// The internal random referral code is NOT exposed.
+// The internal referral code stays hidden.
 // ======================================================
 
 app.get(
@@ -359,11 +373,10 @@ app.get(
 //
 // CheryEarn002-cheryot
 //
-// The CheryEarn number is used to find the actual
-// user and retrieve/create the internal referral code.
+// The CheryEarn number identifies the real user.
 //
-// The internal referral code is never shown in
-// the visible registration field.
+// If an old account has no referral_code,
+// this endpoint creates one automatically.
 // ======================================================
 
 app.get(
@@ -379,7 +392,7 @@ app.get(
 
 
             // ==================================================
-            // CHECK MEMBER FORMAT
+            // VALIDATE MEMBER FORMAT
             // ==================================================
 
             const match =
@@ -402,13 +415,10 @@ app.get(
             }
 
 
-            // ==================================================
-            // GET CHERYEARN NUMBER
-            // ==================================================
-
             const cheryearnNumber =
-                Number(
-                    match[1]
+                parseInt(
+                    match[1],
+                    10
                 );
 
 
@@ -432,7 +442,7 @@ app.get(
 
 
             // ==================================================
-            // FIND REFERRER
+            // FIND USER
             // ==================================================
 
             const userResult =
@@ -474,141 +484,153 @@ app.get(
 
 
             // ==================================================
-            // GET OR CREATE INTERNAL REFERRAL CODE
+            // IF REFERRAL CODE ALREADY EXISTS
             // ==================================================
 
-            let internalReferralCode =
-                user.referral_code;
+            if (
+                user.referral_code &&
+                String(
+                    user.referral_code
+                ).trim() !== ""
+            ) {
+
+                return res.json({
+
+                    success: true,
+
+                    referrerUserId:
+                        String(user.id),
+
+                    referralCode:
+                        String(
+                            user.referral_code
+                        ),
+
+                    cheryearnNumber:
+                        user.cheryearn_number,
+
+                    fullName:
+                        user.full_name,
+
+                    member:
+                        member
+
+                });
+
+            }
 
 
-            /*
-             * Some existing users may have been
-             * created before referral codes were
-             * properly assigned.
-             *
-             * If missing, create one automatically.
-             */
+            // ==================================================
+            // CREATE REFERRAL CODE
+            // ==================================================
 
-            if (!internalReferralCode) {
-
-                let created =
-                    false;
-
-                let attempts =
-                    0;
+            let savedReferralCode =
+                null;
 
 
-                while (
-                    !created &&
-                    attempts < 10
-                ) {
-
-                    attempts++;
+            let attempts =
+                0;
 
 
-                    const generatedCode =
-                        "CE" +
-                        crypto
-                            .randomBytes(8)
-                            .toString("hex")
-                            .toUpperCase();
+            while (
+                !savedReferralCode &&
+                attempts < 10
+            ) {
+
+                attempts++;
 
 
-                    try {
-
-                        const updateResult =
-                            await pool.query(
-                                `
-                                UPDATE users
-                                SET
-                                    referral_code = $1
-                                WHERE id = $2
-                                  AND (
-                                      referral_code IS NULL
-                                      OR referral_code = ''
-                                  )
-                                RETURNING
-                                    referral_code
-                                `,
-                                [
-                                    generatedCode,
-                                    user.id
-                                ]
-                            );
+                const generatedReferralCode =
+                    "CE" +
+                    crypto
+                        .randomBytes(10)
+                        .toString("hex")
+                        .toUpperCase();
 
 
-                        if (
-                            updateResult.rows.length > 0
-                        ) {
+                try {
 
-                            internalReferralCode =
-                                updateResult.rows[0]
-                                    .referral_code;
-
-                            created =
-                                true;
-
-                        } else {
-
-                            /*
-                             * Another request may have
-                             * created the code at the
-                             * same time.
-                             */
-
-                            const refreshedResult =
-                                await pool.query(
-                                    `
-                                    SELECT
-                                        referral_code
-                                    FROM users
-                                    WHERE id = $1
-                                    LIMIT 1
-                                    `,
-                                    [
-                                        user.id
-                                    ]
-                                );
+                    const updateResult =
+                        await pool.query(
+                            `
+                            UPDATE users
+                            SET
+                                referral_code = $1
+                            WHERE id = $2
+                              AND (
+                                  referral_code IS NULL
+                                  OR referral_code = ''
+                              )
+                            RETURNING
+                                referral_code
+                            `,
+                            [
+                                generatedReferralCode,
+                                user.id
+                            ]
+                        );
 
 
-                            if (
-                                refreshedResult.rows.length > 0 &&
-                                refreshedResult.rows[0]
-                                    .referral_code
-                            ) {
+                    if (
+                        updateResult.rows.length > 0
+                    ) {
 
-                                internalReferralCode =
-                                    refreshedResult.rows[0]
-                                        .referral_code;
+                        savedReferralCode =
+                            updateResult.rows[0]
+                                .referral_code;
 
-                                created =
-                                    true;
-
-                            }
-
-                        }
-
-
-                    } catch (updateError) {
-
-                        /*
-                         * If the generated code already
-                         * exists, generate another one.
-                         */
-
-                        if (
-                            updateError.code ===
-                            "23505"
-                        ) {
-
-                            continue;
-
-                        }
-
-
-                        throw updateError;
+                        break;
 
                     }
+
+
+                    // Another request may have created it.
+
+                    const refreshResult =
+                        await pool.query(
+                            `
+                            SELECT
+                                referral_code
+                            FROM users
+                            WHERE id = $1
+                            LIMIT 1
+                            `,
+                            [
+                                user.id
+                            ]
+                        );
+
+
+                    if (
+                        refreshResult.rows.length > 0 &&
+                        refreshResult.rows[0]
+                            .referral_code
+                    ) {
+
+                        savedReferralCode =
+                            refreshResult.rows[0]
+                                .referral_code;
+
+                        break;
+
+                    }
+
+
+                } catch (updateError) {
+
+                    // Retry if the referral code collided.
+
+                    if (
+                        updateError.code ===
+                        "23505"
+                    ) {
+
+                        continue;
+
+                    }
+
+
+                    throw updateError;
 
                 }
 
@@ -616,10 +638,10 @@ app.get(
 
 
             // ==================================================
-            // FINAL SAFETY CHECK
+            // FINAL CHECK
             // ==================================================
 
-            if (!internalReferralCode) {
+            if (!savedReferralCode) {
 
                 return res.status(500).json({
 
@@ -633,6 +655,14 @@ app.get(
             }
 
 
+            console.log(
+                "Referral code created:",
+                savedReferralCode,
+                "for CheryEarn:",
+                cheryearnNumber
+            );
+
+
             // ==================================================
             // SUCCESS
             // ==================================================
@@ -641,24 +671,13 @@ app.get(
 
                 success: true,
 
-                /*
-                 * INTERNAL REFERRAL CODE
-                 * used by registration.
-                 */
+                referrerUserId:
+                    String(user.id),
 
                 referralCode:
-                    internalReferralCode,
-
-                /*
-                 * Actual database user.
-                 */
-
-                referrerUserId:
-                    user.id,
-
-                /*
-                 * Public information.
-                 */
+                    String(
+                        savedReferralCode
+                    ),
 
                 cheryearnNumber:
                     user.cheryearn_number,
@@ -676,7 +695,7 @@ app.get(
 
             console.error(
                 "Referral resolve error:",
-                error.message
+                error
             );
 
 
@@ -685,7 +704,10 @@ app.get(
                 success: false,
 
                 message:
-                    "Unable to resolve referral link."
+                    "Unable to resolve referral link.",
+
+                error:
+                    error.message
 
             });
 
@@ -696,7 +718,7 @@ app.get(
 
 
 // ======================================================
-// PAGES
+// DELIVERY PAGE
 // ======================================================
 
 app.get(
@@ -721,8 +743,13 @@ app.get(
 function normalizePhone(phone) {
 
     let cleanPhone =
-        String(phone || "")
-            .replace(/\s+/g, "");
+        String(
+            phone || ""
+        )
+            .replace(
+                /\s+/g,
+                ""
+            );
 
 
     if (
@@ -766,13 +793,15 @@ function isValidKenyanPhone(phone) {
 
 
 // ======================================================
-// CHECK COMPLETED STATUS
+// CHECK COMPLETED PAYMENT STATUS
 // ======================================================
 
 function isCompletedStatus(status) {
 
     const value =
-        String(status || "")
+        String(
+            status || ""
+        )
             .trim()
             .toUpperCase();
 
@@ -816,6 +845,10 @@ async function processCompletedRegistrationPayment(
         );
 
 
+        // ==================================================
+        // GET PAYMENT
+        // ==================================================
+
         const paymentResult =
             await client.query(
                 `
@@ -852,11 +885,14 @@ async function processCompletedRegistrationPayment(
             paymentResult.rows[0];
 
 
-        // Prevent duplicate commission processing
+        // ==================================================
+        // PREVENT DUPLICATE PROCESSING
+        // ==================================================
 
         if (
-            String(payment.status)
-                .toUpperCase() ===
+            String(
+                payment.status
+            ).toUpperCase() ===
             "COMPLETED"
         ) {
 
@@ -881,6 +917,10 @@ async function processCompletedRegistrationPayment(
         }
 
 
+        // ==================================================
+        // CHECK PAYMENT AMOUNT
+        // ==================================================
+
         const gatewayAmount =
             Number(
                 gatewayPayment?.amount
@@ -894,8 +934,11 @@ async function processCompletedRegistrationPayment(
 
 
         if (
-            Number.isFinite(gatewayAmount) &&
-            gatewayAmount !== databaseAmount
+            Number.isFinite(
+                gatewayAmount
+            ) &&
+            gatewayAmount !==
+                databaseAmount
         ) {
 
             throw new Error(
@@ -904,6 +947,10 @@ async function processCompletedRegistrationPayment(
 
         }
 
+
+        // ==================================================
+        // GET USER
+        // ==================================================
 
         const userResult =
             await client.query(
@@ -938,10 +985,18 @@ async function processCompletedRegistrationPayment(
             userResult.rows[0];
 
 
+        // ==================================================
+        // FIND FIRST UPLINE
+        // ==================================================
+
         const firstUplineId =
             user.referred_by ||
             null;
 
+
+        // ==================================================
+        // FIND SECOND UPLINE
+        // ==================================================
 
         let secondUplineId =
             null;
@@ -1019,7 +1074,7 @@ async function processCompletedRegistrationPayment(
 
 
         // ==================================================
-        // FIRST UPLINE
+        // FIRST UPLINE COMMISSION
         // ==================================================
 
         if (firstUplineId) {
@@ -1065,7 +1120,7 @@ async function processCompletedRegistrationPayment(
 
 
         // ==================================================
-        // SECOND UPLINE
+        // SECOND UPLINE COMMISSION
         // ==================================================
 
         if (secondUplineId) {
@@ -1201,7 +1256,6 @@ async function processCompletedRegistrationPayment(
 
         throw error;
 
-
     } finally {
 
         client.release();
@@ -1233,6 +1287,10 @@ app.post(
             );
 
 
+            // ==================================================
+            // VALIDATE USER ID
+            // ==================================================
+
             if (!userId) {
 
                 return res.status(400).json({
@@ -1248,8 +1306,9 @@ app.post(
 
 
             const userIdValue =
-                String(userId)
-                    .trim();
+                String(
+                    userId
+                ).trim();
 
 
             if (!userIdValue) {
@@ -1266,6 +1325,10 @@ app.post(
             }
 
 
+            // ==================================================
+            // VALIDATE PHONE
+            // ==================================================
+
             if (!phone) {
 
                 return res.status(400).json({
@@ -1281,7 +1344,9 @@ app.post(
 
 
             const normalizedPhone =
-                normalizePhone(phone);
+                normalizePhone(
+                    phone
+                );
 
 
             if (
@@ -1301,6 +1366,10 @@ app.post(
 
             }
 
+
+            // ==================================================
+            // FIND USER
+            // ==================================================
 
             const userResult =
                 await pool.query(
@@ -1339,6 +1408,10 @@ app.post(
                 userResult.rows[0];
 
 
+            // ==================================================
+            // CHECK ALREADY PAID
+            // ==================================================
+
             if (
                 user.registration_paid ===
                 true
@@ -1355,6 +1428,10 @@ app.post(
 
             }
 
+
+            // ==================================================
+            // CHECK PENDING PAYMENT
+            // ==================================================
 
             const pendingPaymentResult =
                 await pool.query(
@@ -1391,6 +1468,10 @@ app.post(
             }
 
 
+            // ==================================================
+            // CREATE PAYMENT REFERENCE
+            // ==================================================
+
             const reference =
                 "CHERY-" +
                 Date.now() +
@@ -1399,6 +1480,10 @@ app.post(
                     Math.random() * 10000
                 );
 
+
+            // ==================================================
+            // SAVE PAYMENT
+            // ==================================================
 
             const paymentRecord =
                 await pool.query(
@@ -1444,6 +1529,10 @@ app.post(
             const paymentId =
                 paymentRecord.rows[0].id;
 
+
+            // ==================================================
+            // PAYLOR CALLBACK
+            // ==================================================
 
             const callbackUrl =
                 `${process.env.BACKEND_URL}/paylor-callback`;
@@ -1501,6 +1590,10 @@ app.post(
                 "================================="
             );
 
+
+            // ==================================================
+            // SEND STK TO PAYLOR
+            // ==================================================
 
             const response =
                 await axios.post(
@@ -1562,6 +1655,10 @@ app.post(
             );
 
 
+            // ==================================================
+            // GET TRANSACTION ID
+            // ==================================================
+
             const transactionId =
                 response.data?.transactionId ||
                 response.data?.transaction_id ||
@@ -1572,6 +1669,10 @@ app.post(
             const status =
                 response.data?.status;
 
+
+            // ==================================================
+            // SAVE PAYLOR RESPONSE
+            // ==================================================
 
             await pool.query(
                 `
@@ -1588,6 +1689,10 @@ app.post(
                 ]
             );
 
+
+            // ==================================================
+            // PAYLOR DID NOT RETURN TRANSACTION ID
+            // ==================================================
 
             if (!transactionId) {
 
@@ -1622,6 +1727,10 @@ app.post(
 
             }
 
+
+            // ==================================================
+            // SUCCESS
+            // ==================================================
 
             return res.json({
 
@@ -1663,10 +1772,8 @@ app.post(
 
 
             return res.status(
-
                 error.response?.status ||
                 500
-
             ).json({
 
                 success: false,
@@ -1718,7 +1825,9 @@ app.post(
 
 
             if (
-                !Buffer.isBuffer(rawBody)
+                !Buffer.isBuffer(
+                    rawBody
+                )
             ) {
 
                 return res.status(400).json({
@@ -1743,6 +1852,10 @@ app.post(
                 "========================="
             );
 
+
+            // ==================================================
+            // CHECK SIGNATURE
+            // ==================================================
 
             if (!signature) {
 
@@ -1852,6 +1965,10 @@ app.post(
             }
 
 
+            // ==================================================
+            // PARSE WEBHOOK
+            // ==================================================
+
             let payment;
 
 
@@ -1859,7 +1976,9 @@ app.post(
 
                 payment =
                     JSON.parse(
-                        rawBody.toString("utf8")
+                        rawBody.toString(
+                            "utf8"
+                        )
                     );
 
             } catch (parseError) {
@@ -1897,6 +2016,10 @@ app.post(
                 "================================="
             );
 
+
+            // ==================================================
+            // SUCCESSFUL PAYMENT
+            // ==================================================
 
             if (
                 isCompletedStatus(
@@ -1966,6 +2089,10 @@ app.post(
             }
 
 
+            // ==================================================
+            // FAILED / CANCELLED PAYMENT
+            // ==================================================
+
             const paymentStatus =
                 String(
                     payment.status || ""
@@ -1974,9 +2101,12 @@ app.post(
 
 
             if (
-                paymentStatus === "FAILED" ||
-                paymentStatus === "CANCELLED" ||
-                paymentStatus === "CANCELED"
+                paymentStatus ===
+                    "FAILED" ||
+                paymentStatus ===
+                    "CANCELLED" ||
+                paymentStatus ===
+                    "CANCELED"
             ) {
 
                 console.log(
@@ -1984,7 +2114,9 @@ app.post(
                 );
 
 
-                if (payment.reference) {
+                if (
+                    payment.reference
+                ) {
 
                     await pool.query(
                         `
@@ -2056,26 +2188,24 @@ app.post(
         try {
 
             const transactionId =
-
                 req.body?.transactionId ||
-
                 req.body?.checkout_request_id ||
-
                 req.body?.transaction_id ||
-
                 req.query?.transactionId ||
-
                 req.query?.checkout_request_id;
 
 
             const reference =
                 req.body?.reference ||
                 req.body?.paymentReference ||
-                req.query?.reference;
+                req.query?.reference ||
+                null;
 
 
             const userId =
-                req.body?.userId;
+                req.body?.userId ||
+                req.query?.userId ||
+                null;
 
 
             console.log(
@@ -2087,6 +2217,12 @@ app.post(
             console.log(
                 "RESOLVED REFERENCE:",
                 reference
+            );
+
+
+            console.log(
+                "RESOLVED USER ID:",
+                userId
             );
 
 
@@ -2103,6 +2239,10 @@ app.post(
 
             }
 
+
+            // ==================================================
+            // ASK PAYLOR FOR PAYMENT STATUS
+            // ==================================================
 
             const response =
                 await axios.get(
@@ -2160,7 +2300,7 @@ app.post(
 
 
             // ==================================================
-            // PAYMENT COMPLETED
+            // COMPLETED
             // ==================================================
 
             if (completed) {
@@ -2172,7 +2312,14 @@ app.post(
                     gatewayPayment.data?.reference;
 
 
-                if (!paymentReference) {
+                // ==================================================
+                // FIND REFERENCE IF PAYLOR DID NOT RETURN IT
+                // ==================================================
+
+                if (
+                    !paymentReference &&
+                    userId
+                ) {
 
                     const lookupResult =
                         await pool.query(
@@ -2187,11 +2334,378 @@ app.post(
                             `,
                             [
                                 String(
-                                    userId || ""
+                                    userId
                                 )
                             ]
                         );
 
 
                     if (
-                        lookupResult.rows.length
+                        lookupResult.rows.length > 0
+                    ) {
+
+                        paymentReference =
+                            lookupResult.rows[0]
+                                .payment_reference;
+
+                    }
+
+                }
+
+
+                // ==================================================
+                // PROCESS COMPLETED PAYMENT
+                // ==================================================
+
+                if (
+                    !paymentReference
+                ) {
+
+                    return res.status(404).json({
+
+                        success: false,
+
+                        paid: false,
+
+                        message:
+                            "Payment completed by gateway, but payment reference was not found."
+
+                    });
+
+                }
+
+
+                try {
+
+                    const processingResult =
+                        await processCompletedRegistrationPayment(
+                            paymentReference,
+                            {
+                                ...gatewayPayment,
+
+                                reference:
+                                    paymentReference,
+
+                                transactionId:
+                                    gatewayPayment.transactionId ||
+                                    gatewayPayment.transaction_id ||
+                                    transactionId,
+
+                                amount:
+                                    gatewayPayment.amount
+
+                            }
+                        );
+
+
+                    console.log(
+                        "Payment status processing result:",
+                        processingResult
+                    );
+
+
+                } catch (processingError) {
+
+                    console.error(
+                        "Payment status processing error:",
+                        processingError
+                    );
+
+
+                    return res.status(500).json({
+
+                        success: false,
+
+                        paid: false,
+
+                        message:
+                            "Payment was completed but account processing failed."
+
+                    });
+
+                }
+
+
+                return res.json({
+
+                    success: true,
+
+                    paid: true,
+
+                    status:
+                        "COMPLETED",
+
+                    transactionId:
+                        transactionId,
+
+                    reference:
+                        paymentReference,
+
+                    userId:
+                        userId,
+
+                    data:
+                        gatewayPayment
+
+                });
+
+            }
+
+
+            // ==================================================
+            // FAILED / CANCELLED
+            // ==================================================
+
+            if (
+                gatewayStatus ===
+                    "FAILED" ||
+                gatewayStatus ===
+                    "CANCELLED" ||
+                gatewayStatus ===
+                    "CANCELED"
+            ) {
+
+                if (
+                    reference
+                ) {
+
+                    await pool.query(
+                        `
+                        UPDATE registration_payments
+                        SET
+                            status = $1,
+                            gateway_response = $2
+                        WHERE payment_reference = $3
+                          AND status = 'PENDING'
+                        `,
+                        [
+                            gatewayStatus,
+
+                            JSON.stringify(
+                                gatewayPayment
+                            ),
+
+                            reference
+
+                        ]
+                    );
+
+                }
+
+
+                return res.json({
+
+                    success: true,
+
+                    paid: false,
+
+                    status:
+                        gatewayStatus,
+
+                    transactionId:
+                        transactionId,
+
+                    reference:
+                        reference,
+
+                    data:
+                        gatewayPayment
+
+                });
+
+            }
+
+
+            // ==================================================
+            // STILL PENDING
+            // ==================================================
+
+            return res.json({
+
+                success: true,
+
+                paid: false,
+
+                status:
+                    gatewayStatus ||
+                    "PENDING",
+
+                transactionId:
+                    transactionId,
+
+                reference:
+                    reference,
+
+                data:
+                    gatewayPayment
+
+            });
+
+
+        } catch (error) {
+
+            console.log("");
+            console.log(
+                "===== PAYMENT STATUS ERROR ====="
+            );
+
+            console.log(
+                error.response?.data ||
+                error.message
+            );
+
+            console.log("");
+
+
+            return res.status(
+                error.response?.status ||
+                500
+            ).json({
+
+                success: false,
+
+                paid: false,
+
+                message:
+                    error.response?.data?.message ||
+                    "Unable to check payment status.",
+
+                data:
+                    error.response?.data ||
+                    null
+
+            });
+
+        }
+
+    }
+);
+
+
+// ======================================================
+// 404 HANDLER
+// ======================================================
+
+app.use(
+    (req, res) => {
+
+        res.status(404).json({
+
+            success: false,
+
+            message:
+                "Route not found."
+
+        });
+
+    }
+);
+
+
+// ======================================================
+// GLOBAL ERROR HANDLER
+// ======================================================
+
+app.use(
+    (error, req, res, next) => {
+
+        console.error(
+            "Unhandled server error:",
+            error
+        );
+
+
+        if (
+            res.headersSent
+        ) {
+
+            return next(error);
+
+        }
+
+
+        return res.status(500).json({
+
+            success: false,
+
+            message:
+                "Internal server error."
+
+        });
+
+    }
+);
+
+
+// ======================================================
+// START SERVER
+// ======================================================
+
+const PORT =
+    process.env.PORT || 10000;
+
+
+app.listen(
+    PORT,
+    () => {
+
+        console.log("");
+
+        console.log(
+            "=========================================="
+        );
+
+        console.log(
+            "       CHERYEARN BACKEND"
+        );
+
+        console.log(
+            "=========================================="
+        );
+
+        console.log(
+            "Port:",
+            PORT
+        );
+
+        console.log(
+            "Frontend:",
+            FRONTEND_URL
+        );
+
+        console.log(
+            "Registration Fee:",
+            REGISTRATION_FEE
+        );
+
+        console.log(
+            "1st Upline:",
+            FIRST_UPLINE_AMOUNT
+        );
+
+        console.log(
+            "2nd Upline:",
+            SECOND_UPLINE_AMOUNT
+        );
+
+        console.log(
+            "Company:",
+            COMPANY_AMOUNT
+        );
+
+        console.log(
+            "Payment Gateway:",
+            "Paylor"
+        );
+
+        console.log(
+            "Status:",
+            "ONLINE"
+        );
+
+        console.log(
+            "=========================================="
+        );
+
+    }
+);
