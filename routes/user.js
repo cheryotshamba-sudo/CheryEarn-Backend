@@ -4,6 +4,7 @@ const pool = require("../db");
 
 const router = express.Router();
 
+
 // ===============================
 // AUTHENTICATION MIDDLEWARE
 // ===============================
@@ -60,6 +61,181 @@ function authenticateToken(req, res, next) {
 
 
 // ===============================
+// SAFE GATEWAY RESPONSE PARSER
+// ===============================
+
+function parseGatewayResponse(value) {
+
+    if (!value) {
+        return {};
+    }
+
+    if (typeof value === "object") {
+        return value;
+    }
+
+    try {
+
+        return JSON.parse(value);
+
+    } catch (error) {
+
+        return {};
+
+    }
+
+}
+
+
+// ===============================
+// FIND TRANSACTION CODE
+// ===============================
+
+function getTransactionCode(
+    gatewayResponse,
+    paymentReference
+) {
+
+    const data =
+        parseGatewayResponse(
+            gatewayResponse
+        );
+
+
+    const possibleKeys = [
+
+        "transactionId",
+        "transaction_id",
+
+        "transactionCode",
+        "transaction_code",
+
+        "trxId",
+        "trx_id",
+
+        "transaction",
+
+        "receipt",
+        "receiptNumber",
+        "receipt_number",
+
+        "mpesaReceiptNumber",
+        "mpesa_receipt_number",
+
+        "checkoutRequestId",
+        "checkout_request_id",
+
+        "merchantRequestId",
+        "merchant_request_id",
+
+        "reference",
+
+        "id"
+
+    ];
+
+
+    for (
+        const key
+        of possibleKeys
+    ) {
+
+        if (
+            data &&
+            data[key] !== undefined &&
+            data[key] !== null &&
+            String(data[key]).trim() !== ""
+        ) {
+
+            return String(
+                data[key]
+            );
+
+        }
+
+    }
+
+
+    // Check common nested objects
+
+    const nestedObjects = [
+
+        data.data,
+        data.payment,
+        data.transaction,
+        data.result,
+        data.response
+
+    ];
+
+
+    for (
+        const nested
+        of nestedObjects
+    ) {
+
+        if (
+            nested &&
+            typeof nested === "object"
+        ) {
+
+            for (
+                const key
+                of possibleKeys
+            ) {
+
+                if (
+                    nested[key] !== undefined &&
+                    nested[key] !== null &&
+                    String(nested[key]).trim() !== ""
+                ) {
+
+                    return String(
+                        nested[key]
+                    );
+
+                }
+
+            }
+
+        }
+
+    }
+
+
+    // Always have a fallback reference
+
+    return paymentReference || "N/A";
+
+}
+
+
+// ===============================
+// CREATE CHERYEARN DISPLAY NUMBER
+// ===============================
+
+function formatCheryEarnNumber(
+    number
+) {
+
+    if (
+        number === null ||
+        number === undefined
+    ) {
+
+        return null;
+
+    }
+
+
+    return `CheryEarn${String(
+        number
+    ).padStart(3, "0")}`;
+
+}
+
+
+// ===============================
 // USER DASHBOARD
 // ===============================
 
@@ -75,7 +251,7 @@ router.get(
 
 
             // ==========================================
-            // GET USER
+            // GET CURRENT USER
             // ==========================================
 
             const result =
@@ -101,11 +277,14 @@ router.get(
                 );
 
 
-            if (result.rows.length === 0) {
+            if (
+                result.rows.length === 0
+            ) {
 
                 return res.status(404).json({
                     success: false,
-                    message: "User account not found."
+                    message:
+                        "User account not found."
                 });
 
             }
@@ -116,24 +295,276 @@ router.get(
 
 
             // ==========================================
-            // COUNT DIRECT REFERRALS
+            // DIRECT REFERRALS
             // ==========================================
 
-            const referralResult =
+            const directResult =
                 await pool.query(
                     `
-                    SELECT COUNT(*) AS total
-                    FROM users
-                    WHERE referred_by = $1
+                    SELECT
+                        u.id,
+                        u.full_name,
+                        u.phone,
+                        u.cheryearn_number,
+                        u.created_at,
+
+                        rp.id AS payment_id,
+                        rp.amount,
+                        rp.status AS payment_status,
+                        rp.payment_reference,
+                        rp.gateway_response,
+                        rp.created_at AS payment_created_at,
+                        rp.completed_at,
+
+                        c.amount AS commission,
+                        c.level AS commission_level,
+                        c.status AS commission_status
+
+                    FROM users u
+
+                    LEFT JOIN registration_payments rp
+                        ON rp.user_id = u.id
+
+                    LEFT JOIN commissions c
+                        ON c.payment_id = rp.id
+                        AND c.recipient_user_id = $1
+                        AND c.level = 1
+
+                    WHERE u.referred_by = $1
+
+                    ORDER BY
+                        COALESCE(
+                            rp.completed_at,
+                            rp.created_at,
+                            u.created_at
+                        ) DESC
                     `,
                     [userId]
                 );
 
 
-            const totalReferrals =
-                Number(
-                    referralResult.rows[0].total
+            // ==========================================
+            // GET DIRECT USER IDS
+            // ==========================================
+
+            const directIds =
+                directResult.rows.map(
+                    row => row.id
                 );
+
+
+            // ==========================================
+            // INDIRECT REFERRALS
+            // ==========================================
+
+            let indirectResult = {
+                rows: []
+            };
+
+
+            if (
+                directIds.length > 0
+            ) {
+
+                indirectResult =
+                    await pool.query(
+                        `
+                        SELECT
+                            u.id,
+                            u.full_name,
+                            u.phone,
+                            u.cheryearn_number,
+                            u.created_at,
+
+                            rp.id AS payment_id,
+                            rp.amount,
+                            rp.status AS payment_status,
+                            rp.payment_reference,
+                            rp.gateway_response,
+                            rp.created_at AS payment_created_at,
+                            rp.completed_at,
+
+                            c.amount AS commission,
+                            c.level AS commission_level,
+                            c.status AS commission_status
+
+                        FROM users u
+
+                        LEFT JOIN registration_payments rp
+                            ON rp.user_id = u.id
+
+                        LEFT JOIN commissions c
+                            ON c.payment_id = rp.id
+                            AND c.recipient_user_id = $1
+                            AND c.level = 2
+
+                        WHERE u.referred_by = ANY($2::text[])
+
+                        ORDER BY
+                            COALESCE(
+                                rp.completed_at,
+                                rp.created_at,
+                                u.created_at
+                            ) DESC
+                        `,
+                        [
+                            userId,
+                            directIds
+                        ]
+                    );
+
+            }
+
+
+            // ==========================================
+            // FORMAT DIRECT REFERRALS
+            // ==========================================
+
+            const directReferrals =
+                directResult.rows.map(
+                    row => {
+
+                        const transactionCode =
+                            getTransactionCode(
+                                row.gateway_response,
+                                row.payment_reference
+                            );
+
+
+                        return {
+
+                            userId:
+                                row.id,
+
+                            fullName:
+                                row.full_name,
+
+                            cheryearnNumber:
+                                formatCheryEarnNumber(
+                                    row.cheryearn_number
+                                ),
+
+                            phone:
+                                row.phone,
+
+                            amountPaid:
+                                row.amount !== null
+                                    ? Number(row.amount)
+                                    : 0,
+
+                            paymentStatus:
+                                row.payment_status ||
+                                "NOT PAID",
+
+                            paymentTime:
+                                row.completed_at ||
+                                row.payment_created_at ||
+                                row.created_at ||
+                                null,
+
+                            transactionCode:
+                                transactionCode,
+
+                            level:
+                                "Direct",
+
+                            commission:
+                                row.commission !== null
+                                    ? Number(row.commission)
+                                    : 0,
+
+                            commissionStatus:
+                                row.commission_status ||
+                                null
+
+                        };
+
+                    }
+                );
+
+
+            // ==========================================
+            // FORMAT INDIRECT REFERRALS
+            // ==========================================
+
+            const indirectReferrals =
+                indirectResult.rows.map(
+                    row => {
+
+                        const transactionCode =
+                            getTransactionCode(
+                                row.gateway_response,
+                                row.payment_reference
+                            );
+
+
+                        return {
+
+                            userId:
+                                row.id,
+
+                            fullName:
+                                row.full_name,
+
+                            cheryearnNumber:
+                                formatCheryEarnNumber(
+                                    row.cheryearn_number
+                                ),
+
+                            phone:
+                                row.phone,
+
+                            amountPaid:
+                                row.amount !== null
+                                    ? Number(row.amount)
+                                    : 0,
+
+                            paymentStatus:
+                                row.payment_status ||
+                                "NOT PAID",
+
+                            paymentTime:
+                                row.completed_at ||
+                                row.payment_created_at ||
+                                row.created_at ||
+                                null,
+
+                            transactionCode:
+                                transactionCode,
+
+                            level:
+                                "Indirect",
+
+                            commission:
+                                row.commission !== null
+                                    ? Number(row.commission)
+                                    : 0,
+
+                            commissionStatus:
+                                row.commission_status ||
+                                null
+
+                        };
+
+                    }
+                );
+
+
+            // ==========================================
+            // TOTAL REFERRALS
+            // ==========================================
+
+            const totalDirectReferrals =
+                directReferrals.length;
+
+
+            const totalIndirectReferrals =
+                indirectReferrals.length;
+
+
+            const totalReferrals =
+                totalDirectReferrals +
+                totalIndirectReferrals;
 
 
             // ==========================================
@@ -163,32 +594,6 @@ router.get(
 
 
             // ==========================================
-            // PENDING EARNINGS
-            // ==========================================
-
-            const pendingResult =
-                await pool.query(
-                    `
-                    SELECT
-                        COALESCE(
-                            SUM(amount),
-                            0
-                        ) AS total
-                    FROM commissions
-                    WHERE recipient_user_id = $1
-                      AND status = 'PENDING'
-                    `,
-                    [userId]
-                );
-
-
-            const pendingEarnings =
-                Number(
-                    pendingResult.rows[0].total
-                );
-
-
-            // ==========================================
             // CURRENT BALANCE
             // ==========================================
 
@@ -197,15 +602,128 @@ router.get(
 
 
             // ==========================================
+            // RECENT ACTIVITY STREAM
+            //
+            // Shows payments made by direct
+            // and indirect referrals.
+            // ==========================================
+
+            const activityResult =
+                await pool.query(
+                    `
+                    SELECT
+                        rp.id,
+                        rp.user_id,
+                        rp.amount,
+                        rp.status,
+                        rp.payment_reference,
+                        rp.phone,
+                        rp.gateway_response,
+                        rp.created_at,
+                        rp.completed_at,
+
+                        u.full_name,
+                        u.cheryearn_number
+
+                    FROM registration_payments rp
+
+                    INNER JOIN users u
+                        ON u.id = rp.user_id
+
+                    WHERE
+                        u.referred_by = $1
+
+                        OR
+
+                        u.referred_by IN (
+                            SELECT id
+                            FROM users
+                            WHERE referred_by = $1
+                        )
+
+                    ORDER BY
+                        COALESCE(
+                            rp.completed_at,
+                            rp.created_at
+                        ) DESC
+
+                    LIMIT 20
+                    `,
+                    [userId]
+                );
+
+
+            const recentActivity =
+                activityResult.rows.map(
+                    row => {
+
+                        const isDirect =
+                            directIds.includes(
+                                row.user_id
+                            );
+
+
+                        const transactionCode =
+                            getTransactionCode(
+                                row.gateway_response,
+                                row.payment_reference
+                            );
+
+
+                        return {
+
+                            paymentId:
+                                row.id,
+
+                            cheryearnNumber:
+                                formatCheryEarnNumber(
+                                    row.cheryearn_number
+                                ),
+
+                            fullName:
+                                row.full_name,
+
+                            phone:
+                                row.phone,
+
+                            amount:
+                                Number(
+                                    row.amount || 0
+                                ),
+
+                            status:
+                                row.status,
+
+                            transactionCode:
+                                transactionCode,
+
+                            paymentReference:
+                                row.payment_reference,
+
+                            paymentTime:
+                                row.completed_at ||
+                                row.created_at ||
+                                null,
+
+                            level:
+                                isDirect
+                                    ? "Direct"
+                                    : "Indirect"
+
+                        };
+
+                    }
+                );
+
+
+            // ==========================================
             // CHERYEARN DISPLAY NUMBER
             // ==========================================
 
             const cheryearnId =
-                user.cheryearn_number
-                    ? `CheryEarn${String(
-                        user.cheryearn_number
-                    ).padStart(3, "0")}`
-                    : null;
+                formatCheryEarnNumber(
+                    user.cheryearn_number
+                );
 
 
             // ==========================================
@@ -260,11 +778,17 @@ router.get(
                     totalEarnings:
                         totalEarnings,
 
-                    pendingEarnings:
-                        pendingEarnings,
-
                     totalReferrals:
-                        totalReferrals
+                        totalReferrals,
+
+                    directReferrals:
+                        directReferrals,
+
+                    indirectReferrals:
+                        indirectReferrals,
+
+                    recentActivity:
+                        recentActivity
 
                 }
 
@@ -277,10 +801,14 @@ router.get(
                 error
             );
 
+
             res.status(500).json({
+
                 success: false,
+
                 message:
                     "Unable to load dashboard."
+
             });
 
         }
