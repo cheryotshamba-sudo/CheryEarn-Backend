@@ -5,77 +5,14 @@ const pool = require("../db");
 
 const router = express.Router();
 
-router.post("/register", async (req, res) => {
-    try {
-        const { full_name, phone, email, password } = req.body;
 
-        if (!full_name || !phone || !email || !password) {
-            return res.status(400).json({
-                success: false,
-                message: "Full name, phone, email and password are required."
-            });
-        }
-
-        if (password.length < 6) {
-            return res.status(400).json({
-                success: false,
-                message: "Password must be at least 6 characters."
-            });
-        }
-
-        const cleanName = full_name.trim();
-        const cleanPhone = phone.trim();
-        const cleanEmail = email.trim().toLowerCase();
-
-        const existingUser = await pool.query(
-            `SELECT id FROM users
-             WHERE phone = $1 OR email = $2`,
-            [cleanPhone, cleanEmail]
-        );
-
-        if (existingUser.rows.length > 0) {
-            return res.status(409).json({
-                success: false,
-                message: "A user with that phone number or email already exists."
-            });
-        }
-
-        const passwordHash = await bcrypt.hash(password, 12);
-
-        const result = await pool.query(
-            `INSERT INTO users
-             (full_name, phone, email, password_hash)
-             VALUES ($1, $2, $3, $4)
-             RETURNING
-                id,
-                full_name,
-                phone,
-                email,
-                account_status,
-                registration_paid,
-                created_at`,
-            [cleanName, cleanPhone, cleanEmail, passwordHash]
-        );
-
-        res.status(201).json({
-            success: true,
-            message: "Registration successful.",
-            user: result.rows[0]
-        });
-
-    } catch (error) {
-        console.error("Registration error:", error);
-
-        res.status(500).json({
-            success: false,
-            message: "Server error. Please try again."
-        });
-    }
-});
-
+// ===============================
+// LOGIN
+// ===============================
 
 router.post("/login", async (req, res) => {
     try {
+
         const { identifier, password } = req.body;
 
         if (!identifier || !password) {
@@ -85,10 +22,11 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        const cleanIdentifier = identifier.trim().toLowerCase();
+        const value = identifier.trim();
 
         const result = await pool.query(
-            `SELECT
+            `
+            SELECT
                 id,
                 full_name,
                 phone,
@@ -97,11 +35,12 @@ router.post("/login", async (req, res) => {
                 account_status,
                 registration_paid,
                 created_at
-             FROM users
-             WHERE LOWER(email) = $1
-                OR phone = $1
-             LIMIT 1`,
-            [cleanIdentifier]
+            FROM users
+            WHERE LOWER(email) = LOWER($1)
+               OR phone = $1
+            LIMIT 1
+            `,
+            [value]
         );
 
         if (result.rows.length === 0) {
@@ -116,7 +55,7 @@ router.post("/login", async (req, res) => {
         if (!user.password_hash) {
             return res.status(500).json({
                 success: false,
-                message: "This account does not have a valid password."
+                message: "Account password is not configured."
             });
         }
 
@@ -132,7 +71,10 @@ router.post("/login", async (req, res) => {
             });
         }
 
-        if (user.account_status === "suspended") {
+        if (
+            user.account_status &&
+            user.account_status.toLowerCase() === "suspended"
+        ) {
             return res.status(403).json({
                 success: false,
                 message: "Your account has been suspended."
@@ -140,7 +82,7 @@ router.post("/login", async (req, res) => {
         }
 
         if (!process.env.JWT_SECRET) {
-            console.error("JWT_SECRET is not configured.");
+            console.error("JWT_SECRET is missing.");
 
             return res.status(500).json({
                 success: false,
@@ -160,16 +102,23 @@ router.post("/login", async (req, res) => {
             }
         );
 
-        delete user.password_hash;
-
-        res.status(200).json({
+        res.json({
             success: true,
             message: "Login successful.",
             token,
-            user
+            user: {
+                id: user.id,
+                full_name: user.full_name,
+                phone: user.phone,
+                email: user.email,
+                account_status: user.account_status,
+                registration_paid: user.registration_paid,
+                created_at: user.created_at
+            }
         });
 
     } catch (error) {
+
         console.error("Login error:", error);
 
         res.status(500).json({
