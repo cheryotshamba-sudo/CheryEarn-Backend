@@ -5,9 +5,9 @@ const pool = require("../db");
 const router = express.Router();
 
 
-// ===============================
-// AUTHENTICATION MIDDLEWARE
-// ===============================
+// =====================================================
+// AUTHENTICATION
+// =====================================================
 
 function authenticateToken(req, res, next) {
 
@@ -22,22 +22,17 @@ function authenticateToken(req, res, next) {
 
     const parts = authHeader.split(" ");
 
-    if (
-        parts.length !== 2 ||
-        parts[0] !== "Bearer"
-    ) {
+    if (parts.length !== 2 || parts[0] !== "Bearer") {
         return res.status(401).json({
             success: false,
             message: "Invalid authorization format."
         });
     }
 
-    const token = parts[1];
-
     try {
 
         const decoded = jwt.verify(
-            token,
+            parts[1],
             process.env.JWT_SECRET
         );
 
@@ -56,9 +51,9 @@ function authenticateToken(req, res, next) {
 }
 
 
-// ===============================
+// =====================================================
 // SAFE GATEWAY RESPONSE PARSER
-// ===============================
+// =====================================================
 
 function parseGatewayResponse(value) {
 
@@ -78,48 +73,36 @@ function parseGatewayResponse(value) {
 }
 
 
-// ===============================
-// FIND TRANSACTION CODE
-// ===============================
+// =====================================================
+// GET TRANSACTION CODE
+// =====================================================
 
 function getTransactionCode(
     gatewayResponse,
     paymentReference
 ) {
 
-    const data =
-        parseGatewayResponse(gatewayResponse);
+    const data = parseGatewayResponse(gatewayResponse);
 
     const possibleKeys = [
-
         "transactionId",
         "transaction_id",
-
         "transactionCode",
         "transaction_code",
-
         "trxId",
         "trx_id",
-
         "transaction",
-
         "receipt",
         "receiptNumber",
         "receipt_number",
-
         "mpesaReceiptNumber",
         "mpesa_receipt_number",
-
         "checkoutRequestId",
         "checkout_request_id",
-
         "merchantRequestId",
         "merchant_request_id",
-
         "reference",
-
         "id"
-
     ];
 
     for (const key of possibleKeys) {
@@ -130,19 +113,16 @@ function getTransactionCode(
             data[key] !== null &&
             String(data[key]).trim() !== ""
         ) {
-
             return String(data[key]);
         }
     }
 
     const nestedObjects = [
-
         data.data,
         data.payment,
         data.transaction,
         data.result,
         data.response
-
     ];
 
     for (const nested of nestedObjects) {
@@ -159,7 +139,6 @@ function getTransactionCode(
                     nested[key] !== null &&
                     String(nested[key]).trim() !== ""
                 ) {
-
                     return String(nested[key]);
                 }
             }
@@ -170,9 +149,9 @@ function getTransactionCode(
 }
 
 
-// ===============================
-// CREATE CHERYEARN DISPLAY NUMBER
-// ===============================
+// =====================================================
+// CHERYEARN NUMBER
+// =====================================================
 
 function formatCheryEarnNumber(number) {
 
@@ -187,9 +166,9 @@ function formatCheryEarnNumber(number) {
 }
 
 
-// ===============================
-// CREATE REFERRAL LINK
-// ===============================
+// =====================================================
+// REFERRAL LINK
+// =====================================================
 
 function createReferralLink(
     cheryearnNumber,
@@ -219,10 +198,7 @@ function createReferralLink(
             .replace(/\s+/g, "")
             .replace(/[^a-zA-Z0-9_.-]/g, "");
 
-    if (
-        !cheryearnId ||
-        !cleanUsername
-    ) {
+    if (!cheryearnId || !cleanUsername) {
         return "";
     }
 
@@ -236,9 +212,264 @@ function createReferralLink(
 }
 
 
-// ===============================
+// =====================================================
+// GET REFERRALS
+//
+// This query returns ONE latest registration payment
+// for each referred user.
+// =====================================================
+
+async function getReferralRows(
+    userId,
+    level
+) {
+
+    let query;
+    let params;
+
+    if (level === 1) {
+
+        query = `
+            SELECT
+                u.id,
+                u.full_name,
+                u.phone,
+                u.cheryearn_number,
+                u.created_at,
+
+                rp.id AS payment_id,
+                rp.amount,
+                rp.status AS payment_status,
+                rp.payment_reference,
+                rp.gateway_response,
+                rp.created_at AS payment_created_at,
+                rp.completed_at,
+
+                c.amount AS commission,
+                c.status AS commission_status
+
+            FROM users u
+
+            LEFT JOIN LATERAL (
+                SELECT
+                    id,
+                    amount,
+                    status,
+                    payment_reference,
+                    gateway_response,
+                    created_at,
+                    completed_at
+
+                FROM registration_payments
+
+                WHERE user_id = u.id
+
+                ORDER BY
+                    CASE
+                        WHEN status = 'COMPLETED' THEN 0
+                        ELSE 1
+                    END,
+                    COALESCE(completed_at, created_at) DESC
+
+                LIMIT 1
+
+            ) rp ON true
+
+            LEFT JOIN commissions c
+                ON c.payment_id = rp.id
+                AND c.recipient_user_id = $1
+                AND c.level = 1
+
+            WHERE u.referred_by = $1
+
+            ORDER BY
+                COALESCE(
+                    rp.completed_at,
+                    rp.created_at,
+                    u.created_at
+                ) DESC
+        `;
+
+        params = [userId];
+
+    } else {
+
+        query = `
+            SELECT
+                u.id,
+                u.full_name,
+                u.phone,
+                u.cheryearn_number,
+                u.created_at,
+
+                rp.id AS payment_id,
+                rp.amount,
+                rp.status AS payment_status,
+                rp.payment_reference,
+                rp.gateway_response,
+                rp.created_at AS payment_created_at,
+                rp.completed_at,
+
+                c.amount AS commission,
+                c.status AS commission_status
+
+            FROM users u
+
+            LEFT JOIN LATERAL (
+                SELECT
+                    id,
+                    amount,
+                    status,
+                    payment_reference,
+                    gateway_response,
+                    created_at,
+                    completed_at
+
+                FROM registration_payments
+
+                WHERE user_id = u.id
+
+                ORDER BY
+                    CASE
+                        WHEN status = 'COMPLETED' THEN 0
+                        ELSE 1
+                    END,
+                    COALESCE(completed_at, created_at) DESC
+
+                LIMIT 1
+
+            ) rp ON true
+
+            LEFT JOIN commissions c
+                ON c.payment_id = rp.id
+                AND c.recipient_user_id = $1
+                AND c.level = 2
+
+            WHERE u.referred_by IN (
+                SELECT id
+                FROM users
+                WHERE referred_by = $1
+            )
+
+            ORDER BY
+                COALESCE(
+                    rp.completed_at,
+                    rp.created_at,
+                    u.created_at
+                ) DESC
+        `;
+
+        params = [userId];
+    }
+
+    const result =
+        await pool.query(query, params);
+
+    return result.rows;
+}
+
+
+// =====================================================
+// FORMAT REFERRAL
+// =====================================================
+
+function formatReferral(
+    row,
+    level
+) {
+
+    const paymentStatus =
+        row.payment_status
+            ? String(row.payment_status).toUpperCase()
+            : "NOT PAID";
+
+    const amount =
+        row.amount !== null &&
+        row.amount !== undefined
+            ? Number(row.amount)
+            : 0;
+
+    const commission =
+        row.commission !== null &&
+        row.commission !== undefined
+            ? Number(row.commission)
+            : 0;
+
+    return {
+
+        userId:
+            row.id,
+
+        fullName:
+            row.full_name,
+
+        name:
+            row.full_name,
+
+        full_name:
+            row.full_name,
+
+        phone:
+            row.phone,
+
+        cheryearnNumber:
+            formatCheryEarnNumber(
+                row.cheryearn_number
+            ),
+
+        cheryearn_number:
+            formatCheryEarnNumber(
+                row.cheryearn_number
+            ),
+
+        amountPaid:
+            amount,
+
+        amount:
+            amount,
+
+        paymentStatus:
+            paymentStatus,
+
+        paymentTime:
+            row.completed_at ||
+            row.payment_created_at ||
+            row.created_at ||
+            null,
+
+        createdAt:
+            row.created_at,
+
+        transactionCode:
+            getTransactionCode(
+                row.gateway_response,
+                row.payment_reference
+            ),
+
+        paymentReference:
+            row.payment_reference || null,
+
+        level:
+            level === 1
+                ? "Direct"
+                : "Indirect",
+
+        commission:
+            commission,
+
+        earning:
+            commission,
+
+        commissionStatus:
+            row.commission_status || null
+
+    };
+}
+
+
+// =====================================================
 // USER DASHBOARD
-// ===============================
+// =====================================================
 
 router.get(
     "/dashboard",
@@ -251,32 +482,33 @@ router.get(
 
 
             // ==========================================
-            // GET CURRENT USER
+            // CURRENT USER
             // ==========================================
 
-            const result = await pool.query(
-                `
-                SELECT
-                    id,
-                    full_name,
-                    username,
-                    phone,
-                    email,
-                    account_status,
-                    registration_paid,
-                    referral_code,
-                    referred_by,
-                    cheryearn_number,
-                    created_at
-                FROM users
-                WHERE id = $1
-                LIMIT 1
-                `,
-                [userId]
-            );
+            const userResult =
+                await pool.query(
+                    `
+                    SELECT
+                        id,
+                        full_name,
+                        username,
+                        phone,
+                        email,
+                        account_status,
+                        registration_paid,
+                        referral_code,
+                        referred_by,
+                        cheryearn_number,
+                        created_at
+                    FROM users
+                    WHERE id = $1
+                    LIMIT 1
+                    `,
+                    [userId]
+                );
 
 
-            if (result.rows.length === 0) {
+            if (userResult.rows.length === 0) {
 
                 return res.status(404).json({
                     success: false,
@@ -286,11 +518,12 @@ router.get(
             }
 
 
-            const user = result.rows[0];
+            const user =
+                userResult.rows[0];
 
 
             // ==========================================
-            // CREATE CHERYEARN ID
+            // CHERYEARN ID
             // ==========================================
 
             const cheryearnId =
@@ -300,7 +533,7 @@ router.get(
 
 
             // ==========================================
-            // CREATE REFERRAL LINK
+            // REFERRAL LINK
             // ==========================================
 
             const referralLink =
@@ -314,57 +547,16 @@ router.get(
             // DIRECT REFERRALS
             // ==========================================
 
-            const directResult = await pool.query(
-                `
-                SELECT
-                    u.id,
-                    u.full_name,
-                    u.phone,
-                    u.cheryearn_number,
-                    u.created_at,
-
-                    rp.id AS payment_id,
-                    rp.amount,
-                    rp.status AS payment_status,
-                    rp.payment_reference,
-                    rp.gateway_response,
-                    rp.created_at AS payment_created_at,
-                    rp.completed_at,
-
-                    c.amount AS commission,
-                    c.level AS commission_level,
-                    c.status AS commission_status
-
-                FROM users u
-
-                LEFT JOIN registration_payments rp
-                    ON rp.user_id = u.id
-
-                LEFT JOIN commissions c
-                    ON c.payment_id = rp.id
-                    AND c.recipient_user_id = $1
-                    AND c.level = 1
-
-                WHERE u.referred_by = $1
-
-                ORDER BY
-                    COALESCE(
-                        rp.completed_at,
-                        rp.created_at,
-                        u.created_at
-                    ) DESC
-                `,
-                [userId]
-            );
+            const directRows =
+                await getReferralRows(
+                    userId,
+                    1
+                );
 
 
-            // ==========================================
-            // GET DIRECT USER IDS
-            // ==========================================
-
-            const directIds =
-                directResult.rows.map(
-                    row => row.id
+            const directReferrals =
+                directRows.map(
+                    row => formatReferral(row, 1)
                 );
 
 
@@ -372,194 +564,21 @@ router.get(
             // INDIRECT REFERRALS
             // ==========================================
 
-            let indirectResult = {
-                rows: []
-            };
+            const indirectRows =
+                await getReferralRows(
+                    userId,
+                    2
+                );
 
-
-            if (directIds.length > 0) {
-
-                indirectResult =
-                    await pool.query(
-                        `
-                        SELECT
-                            u.id,
-                            u.full_name,
-                            u.phone,
-                            u.cheryearn_number,
-                            u.created_at,
-
-                            rp.id AS payment_id,
-                            rp.amount,
-                            rp.status AS payment_status,
-                            rp.payment_reference,
-                            rp.gateway_response,
-                            rp.created_at AS payment_created_at,
-                            rp.completed_at,
-
-                            c.amount AS commission,
-                            c.level AS commission_level,
-                            c.status AS commission_status
-
-                        FROM users u
-
-                        LEFT JOIN registration_payments rp
-                            ON rp.user_id = u.id
-
-                        LEFT JOIN commissions c
-                            ON c.payment_id = rp.id
-                            AND c.recipient_user_id = $1
-                            AND c.level = 2
-
-                        WHERE u.referred_by IN (
-                            SELECT id
-                            FROM users
-                            WHERE referred_by = $1
-                        )
-
-                        ORDER BY
-                            COALESCE(
-                                rp.completed_at,
-                                rp.created_at,
-                                u.created_at
-                            ) DESC
-                        `,
-                        [userId]
-                    );
-
-            }
-
-
-            // ==========================================
-            // FORMAT DIRECT REFERRALS
-            // ==========================================
-
-            const directReferrals =
-                directResult.rows.map(row => {
-
-                    const transactionCode =
-                        getTransactionCode(
-                            row.gateway_response,
-                            row.payment_reference
-                        );
-
-                    return {
-
-                        userId:
-                            row.id,
-
-                        fullName:
-                            row.full_name,
-
-                        cheryearnNumber:
-                            formatCheryEarnNumber(
-                                row.cheryearn_number
-                            ),
-
-                        phone:
-                            row.phone,
-
-                        amountPaid:
-                            row.amount !== null
-                                ? Number(row.amount)
-                                : 0,
-
-                        paymentStatus:
-                            row.payment_status ||
-                            "NOT PAID",
-
-                        paymentTime:
-                            row.completed_at ||
-                            row.payment_created_at ||
-                            row.created_at ||
-                            null,
-
-                        transactionCode:
-                            transactionCode,
-
-                        level:
-                            "Direct",
-
-                        commission:
-                            row.commission !== null
-                                ? Number(row.commission)
-                                : 0,
-
-                        commissionStatus:
-                            row.commission_status ||
-                            null
-
-                    };
-
-                });
-
-
-            // ==========================================
-            // FORMAT INDIRECT REFERRALS
-            // ==========================================
 
             const indirectReferrals =
-                indirectResult.rows.map(row => {
-
-                    const transactionCode =
-                        getTransactionCode(
-                            row.gateway_response,
-                            row.payment_reference
-                        );
-
-                    return {
-
-                        userId:
-                            row.id,
-
-                        fullName:
-                            row.full_name,
-
-                        cheryearnNumber:
-                            formatCheryEarnNumber(
-                                row.cheryearn_number
-                            ),
-
-                        phone:
-                            row.phone,
-
-                        amountPaid:
-                            row.amount !== null
-                                ? Number(row.amount)
-                                : 0,
-
-                        paymentStatus:
-                            row.payment_status ||
-                            "NOT PAID",
-
-                        paymentTime:
-                            row.completed_at ||
-                            row.payment_created_at ||
-                            row.created_at ||
-                            null,
-
-                        transactionCode:
-                            transactionCode,
-
-                        level:
-                            "Indirect",
-
-                        commission:
-                            row.commission !== null
-                                ? Number(row.commission)
-                                : 0,
-
-                        commissionStatus:
-                            row.commission_status ||
-                            null
-
-                    };
-
-                });
+                indirectRows.map(
+                    row => formatReferral(row, 2)
+                );
 
 
             // ==========================================
-            // TOTAL REFERRALS
+            // COUNTS
             // ==========================================
 
             const totalDirectReferrals =
@@ -596,7 +615,7 @@ router.get(
 
             const directEarnings =
                 Number(
-                    directEarningsResult.rows[0].total
+                    directEarningsResult.rows[0].total || 0
                 );
 
 
@@ -623,7 +642,7 @@ router.get(
 
             const indirectEarnings =
                 Number(
-                    indirectEarningsResult.rows[0].total
+                    indirectEarningsResult.rows[0].total || 0
                 );
 
 
@@ -642,6 +661,16 @@ router.get(
 
             const balance =
                 totalEarnings;
+
+
+            // ==========================================
+            // DIRECT USER IDS
+            // ==========================================
+
+            const directIds =
+                directReferrals.map(
+                    referral => referral.userId
+                );
 
 
             // ==========================================
@@ -701,12 +730,6 @@ router.get(
                             row.user_id
                         );
 
-                    const transactionCode =
-                        getTransactionCode(
-                            row.gateway_response,
-                            row.payment_reference
-                        );
-
                     return {
 
                         paymentId:
@@ -730,7 +753,10 @@ router.get(
                             row.status,
 
                         transactionCode:
-                            transactionCode,
+                            getTransactionCode(
+                                row.gateway_response,
+                                row.payment_reference
+                            ),
 
                         paymentReference:
                             row.payment_reference,
@@ -751,7 +777,7 @@ router.get(
 
 
             // ==========================================
-            // FINAL DASHBOARD RESPONSE
+            // RESPONSE
             // ==========================================
 
             return res.json({
@@ -799,11 +825,6 @@ router.get(
 
                 recentActivity:
                     recentActivity,
-
-
-                // ======================================
-                // USER OBJECT
-                // ======================================
 
                 user: {
 
@@ -892,15 +913,11 @@ router.get(
         }
 
     }
-
 );
 
 
 // =====================================================
 // REFERRALS PAGE
-// =====================================================
-// This endpoint is specifically used by referrals.html.
-// It returns both DIRECT and INDIRECT referrals.
 // =====================================================
 
 router.get(
@@ -914,7 +931,7 @@ router.get(
 
 
             // ==========================================
-            // CHECK CURRENT USER
+            // CURRENT USER
             // ==========================================
 
             const userResult =
@@ -953,288 +970,51 @@ router.get(
 
 
             // ==========================================
-            // DIRECT REFERRALS
+            // DIRECT
             // ==========================================
 
-            const directResult =
-                await pool.query(
-                    `
-                    SELECT
-                        u.id,
-                        u.full_name,
-                        u.phone,
-                        u.cheryearn_number,
-                        u.created_at,
-
-                        rp.amount,
-                        rp.status AS payment_status,
-                        rp.payment_reference,
-                        rp.gateway_response,
-                        rp.created_at AS payment_created_at,
-                        rp.completed_at,
-
-                        c.amount AS commission,
-                        c.status AS commission_status
-
-                    FROM users u
-
-                    LEFT JOIN registration_payments rp
-                        ON rp.user_id = u.id
-
-                    LEFT JOIN commissions c
-                        ON c.payment_id = rp.id
-                        AND c.recipient_user_id = $1
-                        AND c.level = 1
-
-                    WHERE u.referred_by = $1
-
-                    ORDER BY
-                        u.created_at DESC
-                    `,
-                    [userId]
+            const directRows =
+                await getReferralRows(
+                    userId,
+                    1
                 );
 
-
-            // ==========================================
-            // INDIRECT REFERRALS
-            // ==========================================
-
-            const indirectResult =
-                await pool.query(
-                    `
-                    SELECT
-                        u.id,
-                        u.full_name,
-                        u.phone,
-                        u.cheryearn_number,
-                        u.created_at,
-
-                        rp.amount,
-                        rp.status AS payment_status,
-                        rp.payment_reference,
-                        rp.gateway_response,
-                        rp.created_at AS payment_created_at,
-                        rp.completed_at,
-
-                        c.amount AS commission,
-                        c.status AS commission_status
-
-                    FROM users u
-
-                    LEFT JOIN registration_payments rp
-                        ON rp.user_id = u.id
-
-                    LEFT JOIN commissions c
-                        ON c.payment_id = rp.id
-                        AND c.recipient_user_id = $1
-                        AND c.level = 2
-
-                    WHERE u.referred_by IN (
-                        SELECT id
-                        FROM users
-                        WHERE referred_by = $1
-                    )
-
-                    ORDER BY
-                        u.created_at DESC
-                    `,
-                    [userId]
-                );
-
-
-            // ==========================================
-            // FORMAT DIRECT REFERRALS
-            // ==========================================
 
             const directReferrals =
-                directResult.rows.map(row => {
-
-                    return {
-
-                        userId:
-                            row.id,
-
-                        fullName:
-                            row.full_name,
-
-                        name:
-                            row.full_name,
-
-                        full_name:
-                            row.full_name,
-
-                        cheryearnNumber:
-                            formatCheryEarnNumber(
-                                row.cheryearn_number
-                            ),
-
-                        cheryearn_number:
-                            formatCheryEarnNumber(
-                                row.cheryearn_number
-                            ),
-
-                        phone:
-                            row.phone,
-
-                        amountPaid:
-                            row.amount !== null
-                                ? Number(row.amount)
-                                : 0,
-
-                        amount:
-                            row.amount !== null
-                                ? Number(row.amount)
-                                : 0,
-
-                        paymentStatus:
-                            row.payment_status ||
-                            "NOT PAID",
-
-                        paymentTime:
-                            row.completed_at ||
-                            row.payment_created_at ||
-                            row.created_at ||
-                            null,
-
-                        createdAt:
-                            row.created_at,
-
-                        transactionCode:
-                            getTransactionCode(
-                                row.gateway_response,
-                                row.payment_reference
-                            ),
-
-                        level:
-                            "Direct",
-
-                        commission:
-                            row.commission !== null
-                                ? Number(row.commission)
-                                : 0,
-
-                        earning:
-                            row.commission !== null
-                                ? Number(row.commission)
-                                : 0,
-
-                        commissionStatus:
-                            row.commission_status ||
-                            null
-
-                    };
-
-                });
+                directRows.map(
+                    row => formatReferral(row, 1)
+                );
 
 
             // ==========================================
-            // FORMAT INDIRECT REFERRALS
+            // INDIRECT
             // ==========================================
+
+            const indirectRows =
+                await getReferralRows(
+                    userId,
+                    2
+                );
+
 
             const indirectReferrals =
-                indirectResult.rows.map(row => {
-
-                    return {
-
-                        userId:
-                            row.id,
-
-                        fullName:
-                            row.full_name,
-
-                        name:
-                            row.full_name,
-
-                        full_name:
-                            row.full_name,
-
-                        cheryearnNumber:
-                            formatCheryEarnNumber(
-                                row.cheryearn_number
-                            ),
-
-                        cheryearn_number:
-                            formatCheryEarnNumber(
-                                row.cheryearn_number
-                            ),
-
-                        phone:
-                            row.phone,
-
-                        amountPaid:
-                            row.amount !== null
-                                ? Number(row.amount)
-                                : 0,
-
-                        amount:
-                            row.amount !== null
-                                ? Number(row.amount)
-                                : 0,
-
-                        paymentStatus:
-                            row.payment_status ||
-                            "NOT PAID",
-
-                        paymentTime:
-                            row.completed_at ||
-                            row.payment_created_at ||
-                            row.created_at ||
-                            null,
-
-                        createdAt:
-                            row.created_at,
-
-                        transactionCode:
-                            getTransactionCode(
-                                row.gateway_response,
-                                row.payment_reference
-                            ),
-
-                        level:
-                            "Indirect",
-
-                        commission:
-                            row.commission !== null
-                                ? Number(row.commission)
-                                : 0,
-
-                        earning:
-                            row.commission !== null
-                                ? Number(row.commission)
-                                : 0,
-
-                        commissionStatus:
-                            row.commission_status ||
-                            null
-
-                    };
-
-                });
+                indirectRows.map(
+                    row => formatReferral(row, 2)
+                );
 
 
             // ==========================================
-            // COMBINE REFERRALS
+            // COMBINE
             // ==========================================
 
             const referrals = [
-
                 ...directReferrals,
-
                 ...indirectReferrals
-
             ];
 
 
             // ==========================================
-            // TOTAL REFERRALS
-            // ==========================================
-
-            const totalReferrals =
-                referrals.length;
-
-
-            // ==========================================
-            // TOTAL REFERRAL EARNINGS
+            // EARNINGS
             // ==========================================
 
             const earningsResult =
@@ -1272,7 +1052,7 @@ router.get(
 
 
             // ==========================================
-            // FINAL RESPONSE
+            // RESPONSE
             // ==========================================
 
             return res.json({
@@ -1280,7 +1060,7 @@ router.get(
                 success: true,
 
                 totalReferrals:
-                    totalReferrals,
+                    referrals.length,
 
                 totalDirectReferrals:
                     directReferrals.length,
@@ -1329,7 +1109,6 @@ router.get(
         }
 
     }
-
 );
 
 
